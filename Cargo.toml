@@ -1,0 +1,18 @@
+[package]
+name = "syncookied"
+version = "0.1.0"
+authors = ["Alexander Polyakov <apolyakov@beget.ru>"]
+
+[dependencies]
+libc = "0.2"
+
+[dependencies.netmap_sys]
+version = "0.1.0"
+path = "netmap_sys"
+features = [ "netmap_with_libs" ]
+
+[dependencies.pnet]
+git = "https://github.com/polachok/libpnet"
+branch = "tcp"
+#branch = "tcp+netmap"
+#features = ["netmap"]
