@@ -99,13 +99,10 @@ impl NetmapDescriptor {
         pollfd.fd = fd;
         pollfd.events = libc::POLLIN;
 
-        println!("before poll");
         let rv = unsafe { libc::poll(&mut pollfd, 1, 1000) };
-        println!("poll: {}", rv);
 
         let (first, last) = self.get_rx_rings();
         for ring in first..last+1 {
-            println!("ring {}", ring);
             rx_ring = unsafe { netmap_user::NETMAP_RXRING(nifp, ring as isize) };
             if unsafe { netmap::nm_ring_empty(rx_ring) } {
                 continue;

@@ -23,70 +23,63 @@ fn get_cpu_count() -> usize {
     } 
 }
 
-fn handle_tcp_packet(source: IpAddr, destination: IpAddr, packet: &[u8]) {
+fn handle_tcp_packet(source: IpAddr, destination: IpAddr, packet: &[u8]) -> Action {
     let tcp = TcpPacket::new(packet);
     if let Some(tcp) = tcp {
         //println!("TCP Packet: {}:{} > {}:{}; length: {}", source,
         //            tcp.get_source(), destination, tcp.get_destination(), packet.len());
-        println!("TCP Packet: {:?}", tcp);
+        if tcp.get_syn() == 1 && tcp.get_ack() == 0 {
+            println!("TCP Packet: {:?}", tcp);
+        }
+        Action::Forward
     } else {
         println!("Malformed TCP Packet");
+        Action::Drop
     }
 }
 
 fn handle_transport_protocol(source: IpAddr, destination: IpAddr,
-                             protocol: IpNextHeaderProtocol, packet: &[u8]) {
+                             protocol: IpNextHeaderProtocol, packet: &[u8]) -> Action {
     match protocol {
         IpNextHeaderProtocols::Tcp  => handle_tcp_packet(source, destination, packet),
-        _ => println!("Unknown {} packet: {} > {}; protocol: {:?} length: {}",
-                match source { IpAddr::V4(..) => "IPv4", _ => "IPv6" },
-                source,
-                destination,
-                protocol,
-                packet.len())
-
+        _ => Action::Forward,
     }
 }
 
-fn handle_ipv4_packet(ethernet: &EthernetPacket) {
+fn handle_ipv4_packet(ethernet: &EthernetPacket) -> Action {
     let header = Ipv4Packet::new(ethernet.payload());
     if let Some(header) = header {
         handle_transport_protocol(IpAddr::V4(header.get_source()),
                                   IpAddr::V4(header.get_destination()),
                                   header.get_next_level_protocol(),
-                                  header.payload());
+                                  header.payload())
     } else {
         println!("Malformed IPv4 Packet");
+        Action::Drop
     }
 }
 
-fn handle_ether_packet(ethernet: &EthernetPacket) {
-    println!("{:?}", &ethernet);
+fn handle_ether_packet(ethernet: &EthernetPacket) -> Action {
     match ethernet.get_ethertype() {
         EtherTypes::Ipv4 => handle_ipv4_packet(ethernet),
-        //EtherTypes::Ipv6 => handle_ipv6_packet(interface_name, ethernet),
-        //EtherTypes::Arp  => handle_arp_packet(interface_name, ethernet),
-        _                => println!("Unknown packet: {} > {}; ethertype: {:?} length: {}",
-                                        ethernet.get_source(),
-                                        ethernet.get_destination(),
-                                        ethernet.get_ethertype(),
-                                        ethernet.packet().len())
+        _                => Action::Forward,
     }
 }
 
 fn handle_packet(packet_data: &[u8]) -> Action {
     let eth = EthernetPacket::new(packet_data).unwrap();
-    handle_ether_packet(&eth);
-    Action::Forward
+    handle_ether_packet(&eth)
 }
 
 fn rx_loop(netmap: &mut NetmapDescriptor) {
         println!("Rx rings: {:?}", netmap.get_rx_rings());
         println!("Tx rings: {:?}", netmap.get_tx_rings());
         thread::sleep_ms(1000);
-        for _ in 0..100 {
+        //for _ in 0..1000 {
+        loop {
             netmap.poll(handle_packet);
         }
+        //}
 }
 
 fn run(iface: &str) {
