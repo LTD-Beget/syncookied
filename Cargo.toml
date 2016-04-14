@@ -7,8 +7,8 @@ authors = ["Alexander Polyakov <apolyakov@beget.ru>"]
 libc = "0.2"
 
 [dependencies.netmap_sys]
-version = "0.1.0"
-path = "netmap_sys"
+git = "https://github.com/libpnet/netmap_sys"
+branch = "master"
 features = [ "netmap_with_libs" ]
 
 [dependencies.pnet]
