@@ -190,6 +190,14 @@ impl NetmapDescriptor {
                         if let Some(tx_ring) = self.find_free_tx_ring() {
                             let tx_slot = tx_ring.get_slot_mut();
                             let tx_buf = tx_slot.get_buf_mut(tx_ring);
+                            /* hack hack hack */
+                            {
+                                let len = ::reply(rx_slice, tx_buf);
+                                tx_slot.set_flags(netmap::NS_BUF_CHANGED as u16 | netmap::NS_REPORT as u16);
+                                tx_slot.set_len(len as u16);
+                                tx_ring.next_slot();
+                                println!("Sent reply len: {}", len);
+                            }
                         }
                     }
                 }

@@ -14,6 +14,6 @@ features = [ "netmap_with_libs" ]
 
 [dependencies.pnet]
 git = "https://github.com/polachok/libpnet"
-branch = "tcp"
+branch = "tcp+slice"
 #branch = "tcp+netmap"
 #features = ["netmap"]

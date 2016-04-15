@@ -8,10 +8,12 @@ use std::thread;
 use std::net::IpAddr;
 
 use pnet::packet::Packet;
-use pnet::packet::ethernet::{EthernetPacket, EtherTypes};
+use pnet::packet::ethernet::{EthernetPacket, MutableEthernetPacket, EtherTypes};
 use pnet::packet::ip::{IpNextHeaderProtocol, IpNextHeaderProtocols};
-use pnet::packet::ipv4::Ipv4Packet;
-use pnet::packet::tcp::TcpPacket;
+use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet, self};
+use pnet::packet::tcp::{TcpPacket,MutableTcpPacket, self};
+use pnet::packet::MutablePacket;
+use pnet::packet::PacketSize;
 
 mod netmap;
 use netmap::{Action,NetmapDescriptor};
@@ -23,6 +25,69 @@ fn get_cpu_count() -> usize {
     } 
 }
 
+pub fn reply(rx_slice: &[u8], tx_slice: &mut [u8]) -> usize {
+    let eth = EthernetPacket::new(rx_slice).unwrap();
+    let ip = Ipv4Packet::new(eth.payload()).unwrap();
+    let tcp = TcpPacket::new(ip.payload()).unwrap();
+    build_reply(&eth, &ip, &tcp, tx_slice)
+}
+
+fn build_reply(eth_in: &EthernetPacket, ip_in: &Ipv4Packet, tcp_in: &TcpPacket, reply: &mut [u8]) -> usize {
+    let mut len = 0;
+    let ether_len;
+    /* build ethernet packet */
+    let mut ether = MutableEthernetPacket::new(reply).unwrap();
+    
+    ether.set_source(eth_in.get_destination());
+    ether.set_destination(eth_in.get_source());
+    ether.set_ethertype(EtherTypes::Ipv4);
+    ether_len = ether.packet_size();
+    len += ether_len;
+
+    /* build ip packet */
+    let mut ip = MutableIpv4Packet::new(ether.payload_mut()).unwrap();
+    ip.set_version(4);
+    ip.set_dscp(0);
+    ip.set_ecn(0);
+    ip.set_identification(0);
+    ip.set_header_length(5);
+    ip.set_ttl(126);
+    ip.set_next_level_protocol(IpNextHeaderProtocols::Tcp);
+    ip.set_source(ip_in.get_destination());
+    ip.set_destination(ip_in.get_source());
+    ip.set_checksum(0);
+    len += ip.packet_size();
+
+    {
+        /* build tcp packet */
+        let mut tcp = MutableTcpPacket::new(&mut ip.payload_mut()[0..20]).unwrap();
+        tcp.set_source(tcp_in.get_destination());
+        tcp.set_destination(tcp_in.get_source());
+        tcp.set_sequence(1488); /* XXX */
+        tcp.set_acknowledgement(tcp_in.get_sequence() + 1);
+        tcp.set_window(65535);
+        tcp.set_syn(1);
+        tcp.set_ack(1);
+        tcp.set_data_offset(5);
+        tcp.set_checksum(0);
+        let cksum = {
+            let tcp = tcp.to_immutable();
+            tcp::ipv4_checksum(&tcp, ip_in.get_destination(), ip_in.get_source(), IpNextHeaderProtocols::Tcp)
+        };
+        tcp.set_checksum(cksum);
+        len += tcp.packet_size();
+    }
+
+    ip.set_total_length((len - ether_len) as u16);
+    let ip_cksum = {
+        let ip = ip.to_immutable();
+        ipv4::checksum(&ip)
+    };
+    ip.set_checksum(ip_cksum);
+
+    len
+}
+
 fn handle_tcp_packet(source: IpAddr, destination: IpAddr, packet: &[u8]) -> Action {
     let tcp = TcpPacket::new(packet);
     if let Some(tcp) = tcp {
@@ -30,6 +95,7 @@ fn handle_tcp_packet(source: IpAddr, destination: IpAddr, packet: &[u8]) -> Acti
         //            tcp.get_source(), destination, tcp.get_destination(), packet.len());
         if tcp.get_syn() == 1 && tcp.get_ack() == 0 {
             println!("TCP Packet: {:?}", tcp);
+            return Action::Reply;
         }
         Action::Forward
     } else {
