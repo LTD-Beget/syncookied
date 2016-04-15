@@ -27,6 +27,63 @@ impl NetmapError {
     }
 }
 
+pub struct NetmapSlot(netmap::netmap_slot);
+
+impl NetmapSlot {
+    fn get_buf_mut<'b,'a>(&'a mut self, ring: &NetmapRing) -> &'b mut [u8] {
+        let buf_idx = self.0.buf_idx;
+        let buf = unsafe { netmap_user::NETMAP_BUF(mem::transmute(ring), buf_idx as isize) as *mut u8 };
+        unsafe { slice::from_raw_parts_mut::<u8>(buf, self.0.len as usize) }
+    }
+
+    fn get_buf<'b,'a>(&'a self, ring: &NetmapRing) -> &'b [u8] {
+        let buf_idx = self.0.buf_idx;
+        let buf = unsafe { netmap_user::NETMAP_BUF(mem::transmute(ring), buf_idx as isize) as *const u8 };
+        unsafe { slice::from_raw_parts::<u8>(buf, self.0.len as usize) }
+    }
+
+    fn get_len(&self) -> u16 {
+        self.0.len
+    }
+
+    fn set_len(&mut self, len: u16) {
+        self.0.len = len;
+    }
+
+    fn set_flags(&mut self, flag: u16) {
+        self.0.flags |= flag;
+    }
+}
+
+pub struct NetmapRing(netmap::netmap_ring);
+
+impl NetmapRing {
+    pub fn is_empty(&self) -> bool {
+        self.0.cur == self.0.tail
+    }
+
+    pub fn get_slot_mut<'a,'b>(&'a self) -> &'b mut NetmapSlot {
+        let cur = self.0.cur;
+        let slots = &self.0.slot as *const netmap::netmap_slot;
+        unsafe { mem::transmute(slots.offset(cur as isize)) }
+    }
+
+    pub fn get_slot<'a,'b>(&'a self) -> &'b NetmapSlot {
+        let cur = self.0.cur;
+        let slots = &self.0.slot as *const netmap::netmap_slot;
+        unsafe { mem::transmute(slots.offset(cur as isize)) }
+    }
+
+    pub fn set_flags(&mut self, flag: u32) {
+        self.0.flags |= flag;
+    }
+
+    pub fn next_slot(&mut self) {
+        self.0.cur = if self.0.cur + 1 == self.0.num_slots { 0 } else { self.0.cur + 1 };
+        self.0.head = self.0.cur;
+    }
+}
+
 pub struct NetmapDescriptor {
     raw: *mut netmap_user::nm_desc
 }
@@ -90,10 +147,25 @@ impl NetmapDescriptor {
         unsafe { ((*self.raw).first_tx_ring, (*self.raw).last_tx_ring) }
     }
 
+    fn find_free_tx_ring(&self) -> Option<&mut NetmapRing> {
+        let nifp = unsafe { (*self.raw).nifp };
+        let mut tx_ring: *mut netmap::netmap_ring;
+        let (first, last) = self.get_tx_rings();
+
+        for ring in first..last+1 {
+            tx_ring = unsafe { netmap_user::NETMAP_TXRING(nifp, ring as isize) };
+            if unsafe { netmap::nm_ring_empty(tx_ring) } { // which means full for tx
+                continue;
+            }
+            return Some(unsafe { mem::transmute(tx_ring) })
+        }
+        return None;
+    }
+
     pub fn poll(&mut self, on_receive: fn(&[u8]) -> Action) {
         let fd = unsafe { (*self.raw).fd };
         let mut pollfd: libc::pollfd = unsafe { mem::zeroed() };
-        let mut rx_ring: *mut netmap::netmap_ring;
+        let mut rx_ring: &mut NetmapRing;
         let nifp = unsafe { (*self.raw).nifp };
 
         pollfd.fd = fd;
@@ -103,33 +175,25 @@ impl NetmapDescriptor {
 
         let (first, last) = self.get_rx_rings();
         for ring in first..last+1 {
-            rx_ring = unsafe { netmap_user::NETMAP_RXRING(nifp, ring as isize) };
-            if unsafe { netmap::nm_ring_empty(rx_ring) } {
-                continue;
-            }
-            assert!(rx_ring != ptr::null_mut());
-            {
-                let rx_cur = unsafe { (*rx_ring).cur };
-                let slots = unsafe { &(*rx_ring).slot as *const netmap::netmap_slot };
-                let slot = unsafe { slots.offset(rx_cur as isize) as *mut netmap::netmap_slot };
-                let buf_idx = unsafe { (*slot).buf_idx };
-                let rx_len = unsafe { (*slot).len };
-                let rx_buf = unsafe { netmap_user::NETMAP_BUF(rx_ring, buf_idx as isize) };
-                let rx_slice = unsafe { slice::from_raw_parts::<u8>(rx_buf as *const u8, rx_len as usize) };
+            rx_ring = unsafe { mem::transmute(netmap_user::NETMAP_RXRING(nifp, ring as isize)) };
+            while !rx_ring.is_empty() {
+                let mut rx_slot = rx_ring.get_slot_mut();
+                let rx_slice = rx_slot.get_buf(rx_ring);
                 match on_receive(rx_slice) {
                     Action::Drop => {},
                     Action::Forward => unsafe {
-                            (*slot).flags |= netmap::NS_FORWARD as u16;
-                            (*rx_ring).flags |= netmap::NR_FORWARD as u32;
+                            rx_slot.set_flags(netmap::NS_FORWARD as u16);
+                            rx_ring.set_flags(netmap::NR_FORWARD as u32);
                     },
                     Action::Reply => {
                         // TODO
+                        if let Some(tx_ring) = self.find_free_tx_ring() {
+                            let tx_slot = tx_ring.get_slot_mut();
+                            let tx_buf = tx_slot.get_buf_mut(tx_ring);
+                        }
                     }
                 }
-                unsafe {
-                    (*rx_ring).cur = netmap_user::nm_ring_next(rx_ring, rx_cur);
-                    (*rx_ring).head = (*rx_ring).cur;
-                }
+                rx_ring.next_slot();
             }
         }
     }
