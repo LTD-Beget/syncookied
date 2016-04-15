@@ -88,6 +88,8 @@ pub struct NetmapDescriptor {
     raw: *mut netmap_user::nm_desc
 }
 
+unsafe impl Send for NetmapDescriptor {}
+
 impl NetmapDescriptor {
     pub fn new(iface: &str) -> Result<Self, NetmapError> {
         let base_nmd: netmap::nmreq = unsafe { mem::zeroed() };

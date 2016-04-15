@@ -1,11 +1,13 @@
 extern crate libc;
 extern crate pnet;
+extern crate crossbeam;
 
 use std::env;
 use std::process;
 use std::thread;
 
 use std::net::IpAddr;
+use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
 
 use pnet::packet::Packet;
 use pnet::packet::ethernet::{EthernetPacket, MutableEthernetPacket, EtherTypes};
@@ -16,7 +18,13 @@ use pnet::packet::MutablePacket;
 use pnet::packet::PacketSize;
 
 mod netmap;
+mod cookie;
+mod sha1;
 use netmap::{Action,NetmapDescriptor};
+
+static TCP_TIME_STAMP: AtomicUsize = ATOMIC_USIZE_INIT;
+static TCP_COOKIE_TIME: AtomicUsize = ATOMIC_USIZE_INIT;
+pub static mut syncookie_secret: [[u32;17];2] = [[0;17];2];
 
 // helpers
 fn get_cpu_count() -> usize {
@@ -60,10 +68,15 @@ fn build_reply(eth_in: &EthernetPacket, ip_in: &Ipv4Packet, tcp_in: &TcpPacket, 
 
     {
         /* build tcp packet */
+        let cookie_time = TCP_COOKIE_TIME.load(Ordering::Relaxed);
+        let seq_num = cookie::generate_cookie_init_sequence(
+            ip_in.get_source(), ip_in.get_destination(),
+            tcp_in.get_source(), tcp_in.get_destination(), tcp_in.get_sequence(),
+            1460, cookie_time as u32);
         let mut tcp = MutableTcpPacket::new(&mut ip.payload_mut()[0..20]).unwrap();
         tcp.set_source(tcp_in.get_destination());
         tcp.set_destination(tcp_in.get_source());
-        tcp.set_sequence(1488); /* XXX */
+        tcp.set_sequence(seq_num); /* XXX */
         tcp.set_acknowledgement(tcp_in.get_sequence() + 1);
         tcp.set_window(65535);
         tcp.set_syn(1);
@@ -152,16 +165,65 @@ fn run(iface: &str) {
     let nm = NetmapDescriptor::new(iface).unwrap();
     println!("Rx rings: {}, Tx rings: {} flags: {}", nm.get_rx_rings_count(), nm.get_tx_rings_count(), nm.get_flags());
 
-    for ring in 0..nm.get_rx_rings_count() {
-        let mut ring_nm = nm.clone_ring(ring).unwrap();
-        /* XXX */
-        rx_loop(&mut ring_nm);
+    crossbeam::scope(|scope| {
+        scope.spawn(|| read_uptime());
+
+        for ring in 0..nm.get_rx_rings_count() {
+            let mut ring_nm = nm.clone_ring(ring).unwrap();
+            scope.spawn(move|| rx_loop(&mut ring_nm));
+        }
+    });
+}
+
+fn read_uptime() {
+    use std::fs::File;
+    use std::io::prelude::*;
+    use std::io::BufReader;
+    let file = File::open("/proc/beget_uptime").unwrap();
+    let reader = BufReader::new(file);
+    let mut jiffies = 0;
+    let mut tcp_cookie_time = 0;
+    //let mut syncookie_secret: [[u32;17]; 2] = [[0;17]; 2];
+    for (idx, line) in reader.lines().enumerate() {
+        let line = line.unwrap();
+        match idx {
+            0 => {
+                for (idx, word) in line.split(' ').enumerate() {
+                    match idx {
+                        0 => { jiffies = word.parse::<u64>().unwrap() },
+                        1 => { tcp_cookie_time = word.parse::<u32>().unwrap() },
+                        _ => {},
+                    }
+                }
+            },
+            1 => {
+                for (idx, word) in line.split('.').enumerate() {
+                    if word == "" {
+                        continue;
+                    }
+                    unsafe { syncookie_secret[0][idx] = u32::from_str_radix(word, 16).unwrap() };
+                }
+            },
+            2 => {
+                for (idx, word) in line.split('.').enumerate() {
+                    if word == "" {
+                        continue;
+                    }
+                    unsafe { syncookie_secret[1][idx] = u32::from_str_radix(word, 16).unwrap() };
+                }
+            },
+            _ => {},
+        }
     }
+    println!("jiffies: {}, tcp_cookie_time: {}, syncookie_secret: {:?}", jiffies, tcp_cookie_time, unsafe { syncookie_secret });
+    TCP_TIME_STAMP.store(jiffies as usize & 0xffffffff, Ordering::SeqCst);
+    TCP_COOKIE_TIME.store(tcp_cookie_time as usize, Ordering::SeqCst);
 }
 
 fn main() {
     let iface = env::args().nth(1).unwrap();
     let ncpus = get_cpu_count();
     println!("interface: {} cores: {}", iface, ncpus);
+    read_uptime();
     run(&iface);
 }
