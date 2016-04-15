@@ -58,11 +58,11 @@ pub fn generate_cookie_init_sequence(source_addr: Ipv4Addr, dest_addr: Ipv4Addr,
 
 
 #[inline]
-pub fn synproxy_init_timestamp_cookie(wscale: u8, sperm: u8, ecn: u8, tcp_time_stamp: u32) {
+pub fn synproxy_init_timestamp_cookie(wscale: u8, sperm: u8, ecn: u8, tcp_time_stamp: u32) -> u32 {
     let mut tsval: u32 = tcp_time_stamp & !0x3f;
 
     if wscale != 0 {
-        tsval |= wscale;
+        tsval |= wscale as u32;
     } else {
         tsval |= 0xf;
     }
@@ -75,6 +75,6 @@ pub fn synproxy_init_timestamp_cookie(wscale: u8, sperm: u8, ecn: u8, tcp_time_s
         tsval |= 1 << 5;
     }
 
-    return tsval;
+    tsval
 }
 
