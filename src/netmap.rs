@@ -164,7 +164,7 @@ impl NetmapDescriptor {
         return None;
     }
 
-    pub fn poll(&mut self, on_receive: fn(&[u8]) -> Action) {
+    pub fn poll(&mut self, on_receive: fn(&[u8]) -> Action, reply: fn(&[u8], &mut [u8]) -> usize) {
         let fd = unsafe { (*self.raw).fd };
         let mut pollfd: libc::pollfd = unsafe { mem::zeroed() };
         let mut rx_ring: &mut NetmapRing;
@@ -194,7 +194,7 @@ impl NetmapDescriptor {
                             let tx_buf = tx_slot.get_buf_mut(tx_ring);
                             /* hack hack hack */
                             {
-                                let len = ::reply(rx_slice, tx_buf);
+                                let len = reply(rx_slice, tx_buf);
                                 tx_slot.set_flags(netmap::NS_BUF_CHANGED as u16 | netmap::NS_REPORT as u16);
                                 tx_slot.set_len(len as u16);
                                 tx_ring.next_slot();
