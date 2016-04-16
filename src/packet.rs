@@ -12,6 +12,19 @@ use pnet::packet::PacketSize;
 use ::netmap::{Action,NetmapDescriptor};
 use ::cookie;
 
+pub fn handle_input(packet_data: &[u8]) -> Action {
+    let eth = EthernetPacket::new(packet_data).unwrap();
+    handle_ether_packet(&eth)
+}
+
+pub fn handle_reply(rx_slice: &[u8], tx_slice: &mut [u8]) -> usize {
+    /* HACK */
+    let eth = EthernetPacket::new(rx_slice).unwrap();
+    let ip = Ipv4Packet::new(eth.payload()).unwrap();
+    let tcp = TcpPacket::new(ip.payload()).unwrap();
+    build_reply(&eth, &ip, &tcp, tx_slice)
+}
+
 #[inline]
 fn u32_to_oct(bits: u32) -> [u8; 4] {
     [(bits >> 24) as u8, (bits >> 16) as u8, (bits >> 8) as u8, bits as u8]
@@ -157,17 +170,4 @@ fn handle_ether_packet(ethernet: &EthernetPacket) -> Action {
         EtherTypes::Ipv4 => handle_ipv4_packet(ethernet),
         _                => Action::Forward,
     }
-}
-
-pub fn handle_input(packet_data: &[u8]) -> Action {
-    let eth = EthernetPacket::new(packet_data).unwrap();
-    handle_ether_packet(&eth)
-}
-
-pub fn handle_reply(rx_slice: &[u8], tx_slice: &mut [u8]) -> usize {
-    /* HACK */
-    let eth = EthernetPacket::new(rx_slice).unwrap();
-    let ip = Ipv4Packet::new(eth.payload()).unwrap();
-    let tcp = TcpPacket::new(ip.payload()).unwrap();
-    build_reply(&eth, &ip, &tcp, tx_slice)
 }
