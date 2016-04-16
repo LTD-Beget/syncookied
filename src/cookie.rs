@@ -1,6 +1,7 @@
 use std::ptr;
 use std::mem;
 use std::net::Ipv4Addr;
+use std::num::Wrapping;
 
 static msstab: [u16;4] = [ 536, 1300, 1440, 1460 ];
 const COOKIEBITS: u32 = 24;	/* Upper bits store count */
@@ -11,15 +12,18 @@ const SHA_WORKSPACE_WORDS: usize = 16;
 #[inline]
 fn cookie_hash(source_addr: u32, dest_addr: u32, source_port: u16, dest_port: u16,
                 count: u32, c: u32) -> u32 {
-    let mut tmp: [u32; 16 + 5 + SHA_WORKSPACE_WORDS] = unsafe { mem::uninitialized() };
+    let mut tmp: [u32; 16 + 5 + SHA_WORKSPACE_WORDS] = unsafe { mem::zeroed() };
 
+    unsafe {
+        ptr::copy_nonoverlapping(::syncookie_secret[c as usize].as_ptr(), tmp.as_mut_ptr().offset(4), 17);
+    }
     tmp[0] = source_addr;
     tmp[1] = dest_addr;
     tmp[2] = ((source_port as u32) << 16) + dest_port as u32;
     tmp[3] = count;
     unsafe {
-        ptr::copy_nonoverlapping(::syncookie_secret[c as usize].as_ptr(), &mut tmp[4], 17);
-        ::sha1::sha1_transform_ssse3(&mut tmp[16], mem::transmute(tmp.as_ptr()), 1);
+        ::sha1::sha1_transform_ssse3(tmp.as_mut_ptr().offset(16), tmp.as_ptr() as *const u8, 1);
+        //::sha1::sha_transform(tmp.as_mut_ptr().offset(16), tmp.as_ptr() as *const u8, tmp.as_mut_ptr().offset(16 + 5));
     }
 
     tmp[17]
@@ -37,9 +41,9 @@ fn secure_tcp_syn_cookie(source_addr: u32, dest_addr: u32, source_port: u16, des
      * As an extra hack, we add a small "data" value that encodes the
      * MSS into the second hash value.
      */
-    cookie_hash(source_addr, dest_addr, source_port, dest_port, 0, 0)
-            + sseq + (tcp_cookie_time << COOKIEBITS)
-            + ((cookie_hash(source_addr, dest_addr, source_port, dest_port, tcp_cookie_time, 1) + data) & COOKIEMASK)
+    (Wrapping(cookie_hash(source_addr, dest_addr, source_port, dest_port, 0, 0))
+            + Wrapping(sseq) + Wrapping(tcp_cookie_time << COOKIEBITS)
+            + ((Wrapping(cookie_hash(source_addr, dest_addr, source_port, dest_port, tcp_cookie_time, 1)) + Wrapping(data)) & Wrapping(COOKIEMASK))).0
 }
 
 #[inline]
@@ -53,9 +57,21 @@ pub fn generate_cookie_init_sequence(source_addr: Ipv4Addr, dest_addr: Ipv4Addr,
     let mssind = 3; /* 1460 */
     let source_octets = source_addr.octets();
     let dest_octets = dest_addr.octets();
-    secure_tcp_syn_cookie(oct_to_u32(source_octets), oct_to_u32(dest_octets), source_port, dest_port, seq, mssind, tcp_cookie_time)
+    secure_tcp_syn_cookie(oct_to_u32(source_octets).to_be(), oct_to_u32(dest_octets).to_be(), source_port.to_be(), dest_port.to_be(), seq, mssind, tcp_cookie_time)
 }
 
+#[test]
+fn test_cookie_init() {
+    ::read_uptime();
+    let tcp_cookie_time = 240470;
+    let source_addr = Ipv4Addr::new(192, 168, 3, 237);
+    let dest_addr = Ipv4Addr::new(192, 168, 111, 51);
+    let source_port = 51771;
+    let dest_port = 9000;
+    let seq: u32 = 1646691064;
+    let mss = 1460;
+    println!("COOKIE: {}", generate_cookie_init_sequence(source_addr, dest_addr, source_port, dest_port, seq.to_be(), mss, tcp_cookie_time));
+}
 
 #[inline]
 pub fn synproxy_init_timestamp_cookie(wscale: u8, sperm: u8, ecn: u8, tcp_time_stamp: u32) -> u32 {

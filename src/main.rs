@@ -13,7 +13,7 @@ use pnet::packet::Packet;
 use pnet::packet::ethernet::{EthernetPacket, MutableEthernetPacket, EtherTypes};
 use pnet::packet::ip::{IpNextHeaderProtocol, IpNextHeaderProtocols};
 use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet, self};
-use pnet::packet::tcp::{TcpPacket,MutableTcpPacket, self};
+use pnet::packet::tcp::{TcpPacket, MutableTcpPacket, MutableTcpOptionPacket, TcpOptionNumbers, self};
 use pnet::packet::MutablePacket;
 use pnet::packet::PacketSize;
 
@@ -40,6 +40,11 @@ pub fn reply(rx_slice: &[u8], tx_slice: &mut [u8]) -> usize {
     build_reply(&eth, &ip, &tcp, tx_slice)
 }
 
+#[inline]
+fn u32_to_oct(bits: u32) -> [u8; 4] {
+    [(bits >> 24) as u8, (bits >> 16) as u8, (bits >> 8) as u8, bits as u8]
+}
+
 fn build_reply(eth_in: &EthernetPacket, ip_in: &Ipv4Packet, tcp_in: &TcpPacket, reply: &mut [u8]) -> usize {
     let mut len = 0;
     let ether_len;
@@ -60,6 +65,7 @@ fn build_reply(eth_in: &EthernetPacket, ip_in: &Ipv4Packet, tcp_in: &TcpPacket, 
     ip.set_identification(0);
     ip.set_header_length(5);
     ip.set_ttl(126);
+    ip.set_flags(2);
     ip.set_next_level_protocol(IpNextHeaderProtocols::Tcp);
     ip.set_source(ip_in.get_destination());
     ip.set_destination(ip_in.get_source());
@@ -72,17 +78,51 @@ fn build_reply(eth_in: &EthernetPacket, ip_in: &Ipv4Packet, tcp_in: &TcpPacket, 
         let seq_num = cookie::generate_cookie_init_sequence(
             ip_in.get_source(), ip_in.get_destination(),
             tcp_in.get_source(), tcp_in.get_destination(), tcp_in.get_sequence(),
-            1460, cookie_time as u32);
-        let mut tcp = MutableTcpPacket::new(&mut ip.payload_mut()[0..20]).unwrap();
+            1460 /* FIXME */, cookie_time as u32);
+        let mut tcp = MutableTcpPacket::new(&mut ip.payload_mut()[0..20 + 24]).unwrap();
         tcp.set_source(tcp_in.get_destination());
         tcp.set_destination(tcp_in.get_source());
-        tcp.set_sequence(seq_num); /* XXX */
+        tcp.set_sequence(seq_num);
         tcp.set_acknowledgement(tcp_in.get_sequence() + 1);
         tcp.set_window(65535);
         tcp.set_syn(1);
         tcp.set_ack(1);
-        tcp.set_data_offset(5);
+        tcp.set_data_offset(11);
         tcp.set_checksum(0);
+        {
+            let options = tcp.get_options_raw_mut();
+            {
+                let mut mss = MutableTcpOptionPacket::new(&mut options[0..4]).unwrap();
+                mss.set_number(TcpOptionNumbers::MSS);
+                mss.set_length(&[4]);
+                let mss_val: u16 = 1460; // FIXME
+                mss.set_data(&[(mss_val >> 8) as u8, (mss_val & 0xff) as u8]);
+            }
+            { /* XXX hardcode sack */
+                let mut sack = MutableTcpOptionPacket::new(&mut options[4..6]).unwrap();
+                sack.set_number(TcpOptionNumbers::SACK_PERMITTED);
+                sack.set_length(&[2]);
+            }
+            { /* Timestamp */
+                let my_tcp_time = TCP_TIME_STAMP.load(Ordering::Relaxed) as u32;
+                let in_options = tcp_in.get_options();
+                let ts_option = in_options.iter().filter(|opt| (*opt).get_number() == TcpOptionNumbers::TIMESTAMPS).nth(0).unwrap();
+                let their_time = &ts_option.get_data()[0..4]; /* HACK */
+                let mut ts = MutableTcpOptionPacket::new(&mut options[6..16]).unwrap();
+                ts.set_number(TcpOptionNumbers::TIMESTAMPS);
+                ts.set_length(&[10]);
+                let mut stamps: Vec<u8> = vec![];
+                stamps.extend_from_slice(&u32_to_oct(cookie::synproxy_init_timestamp_cookie(7, 1, 0, my_tcp_time)));
+                stamps.extend_from_slice(their_time);
+                ts.set_data(&stamps);
+            }
+            { /* WSCALE */
+                let mut ws = MutableTcpOptionPacket::new(&mut options[16..19]).unwrap();
+                ws.set_number(TcpOptionNumbers::WSCALE);
+                ws.set_length(&[3]);
+                ws.set_data(&[7]);
+            }
+        }
         let cksum = {
             let tcp = tcp.to_immutable();
             tcp::ipv4_checksum(&tcp, ip_in.get_destination(), ip_in.get_source(), IpNextHeaderProtocols::Tcp)
@@ -166,7 +206,10 @@ fn run(iface: &str) {
     println!("Rx rings: {}, Tx rings: {} flags: {}", nm.get_rx_rings_count(), nm.get_tx_rings_count(), nm.get_flags());
 
     crossbeam::scope(|scope| {
-        scope.spawn(|| read_uptime());
+        scope.spawn(|| loop {
+            read_uptime();
+            thread::sleep_ms(1000);
+        });
 
         for ring in 0..nm.get_rx_rings_count() {
             let mut ring_nm = nm.clone_ring(ring).unwrap();
@@ -175,7 +218,7 @@ fn run(iface: &str) {
     });
 }
 
-fn read_uptime() {
+pub fn read_uptime() {
     use std::fs::File;
     use std::io::prelude::*;
     use std::io::BufReader;
@@ -215,7 +258,7 @@ fn read_uptime() {
             _ => {},
         }
     }
-    println!("jiffies: {}, tcp_cookie_time: {}, syncookie_secret: {:?}", jiffies, tcp_cookie_time, unsafe { syncookie_secret });
+    //println!("jiffies: {}, tcp_cookie_time: {}, syncookie_secret: {:?}", jiffies, tcp_cookie_time, unsafe { syncookie_secret });
     TCP_TIME_STAMP.store(jiffies as usize & 0xffffffff, Ordering::SeqCst);
     TCP_COOKIE_TIME.store(tcp_cookie_time as usize, Ordering::SeqCst);
 }
