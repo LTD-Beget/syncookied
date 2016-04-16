@@ -106,8 +106,10 @@ fn build_reply(eth_in: &EthernetPacket, ip_in: &Ipv4Packet, tcp_in: &TcpPacket, 
             { /* Timestamp */
                 let my_tcp_time = TCP_TIME_STAMP.load(Ordering::Relaxed) as u32;
                 let in_options = tcp_in.get_options();
-                let ts_option = in_options.iter().filter(|opt| (*opt).get_number() == TcpOptionNumbers::TIMESTAMPS).nth(0).unwrap();
-                let their_time = &ts_option.get_data()[0..4]; /* HACK */
+                let mut their_time = &[0, 0, 0, 0][..];
+                if let Some(ts_option) = in_options.iter().filter(|opt| (*opt).get_number() == TcpOptionNumbers::TIMESTAMPS).nth(0) {
+                    their_time = &ts_option.get_data()[0..4]; /* HACK */
+                }
                 let mut ts = MutableTcpOptionPacket::new(&mut options[6..16]).unwrap();
                 ts.set_number(TcpOptionNumbers::TIMESTAMPS);
                 ts.set_length(&[10]);
