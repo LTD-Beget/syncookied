@@ -3,7 +3,7 @@ use std::mem;
 use std::net::Ipv4Addr;
 use std::num::Wrapping;
 
-static msstab: [u16;4] = [ 536, 1300, 1440, 1460 ];
+static MSSTAB: [u16;4] = [ 536, 1300, 1440, 1460 ];
 const COOKIEBITS: u32 = 24;	/* Upper bits store count */
 const COOKIEMASK: u32 = ((1 << COOKIEBITS) - 1);
 
@@ -51,13 +51,26 @@ fn oct_to_u32(octets: [u8; 4]) -> u32 {
     (octets[0] as u32) << 24 | (octets[1] as u32) << 16 | (octets[2] as u32) << 8 | octets[3] as u32
 }
 
+/// Return cookie and mss value
 #[inline]
-pub fn generate_cookie_init_sequence(source_addr: Ipv4Addr, dest_addr: Ipv4Addr, source_port: u16, dest_port: u16, seq: u32, mss: u16, tcp_cookie_time: u32) -> u32 {
-    /* TODO */
-    let mssind = 3; /* 1460 */
+pub fn generate_cookie_init_sequence(source_addr: Ipv4Addr, dest_addr: Ipv4Addr,
+                                     source_port: u16, dest_port: u16,
+                                     seq: u32, mss: u16, tcp_cookie_time: u32) -> (u32,u16) {
+    let mut mssind = 3;
+    let mut mssval = 1460;
+
+    for (idx, val) in MSSTAB.iter().enumerate() {
+        if mss >= *val {
+            mssind = (MSSTAB.len() - idx) as u32;
+            mssval = *val;
+            break;
+        }
+    }
     let source_octets = source_addr.octets();
     let dest_octets = dest_addr.octets();
-    secure_tcp_syn_cookie(oct_to_u32(source_octets).to_be(), oct_to_u32(dest_octets).to_be(), source_port.to_be(), dest_port.to_be(), seq, mssind, tcp_cookie_time)
+    let cookie = secure_tcp_syn_cookie(oct_to_u32(source_octets).to_be(), oct_to_u32(dest_octets).to_be(),
+                                     source_port.to_be(), dest_port.to_be(), seq, mssind, tcp_cookie_time);
+    (cookie, mssval)
 }
 
 #[test]
@@ -70,7 +83,7 @@ fn test_cookie_init() {
     let dest_port = 9000;
     let seq: u32 = 1646691064;
     let mss = 1460;
-    println!("COOKIE: {}", generate_cookie_init_sequence(source_addr, dest_addr, source_port, dest_port, seq.to_be(), mss, tcp_cookie_time));
+    println!("COOKIE: {:?}", generate_cookie_init_sequence(source_addr, dest_addr, source_port, dest_port, seq.to_be(), mss, tcp_cookie_time));
 }
 
 #[inline]

@@ -60,7 +60,7 @@ fn build_reply(eth_in: &EthernetPacket, ip_in: &Ipv4Packet, tcp_in: &TcpPacket, 
     {
         /* build tcp packet */
         let cookie_time = ::TCP_COOKIE_TIME.load(Ordering::Relaxed);
-        let seq_num = cookie::generate_cookie_init_sequence(
+        let (seq_num, mss_val) = cookie::generate_cookie_init_sequence(
             ip_in.get_source(), ip_in.get_destination(),
             tcp_in.get_source(), tcp_in.get_destination(), tcp_in.get_sequence(),
             1460 /* FIXME */, cookie_time as u32);
@@ -80,7 +80,6 @@ fn build_reply(eth_in: &EthernetPacket, ip_in: &Ipv4Packet, tcp_in: &TcpPacket, 
                 let mut mss = MutableTcpOptionPacket::new(&mut options[0..4]).unwrap();
                 mss.set_number(TcpOptionNumbers::MSS);
                 mss.set_length(&[4]);
-                let mss_val: u16 = 1460; // FIXME
                 mss.set_data(&[(mss_val >> 8) as u8, (mss_val & 0xff) as u8]);
             }
             { /* XXX hardcode sack */
