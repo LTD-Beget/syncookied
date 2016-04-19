@@ -46,18 +46,31 @@ fn rx_loop(netmap: &mut NetmapDescriptor) {
 }
 
 fn run(iface: &str) {
-    let nm = NetmapDescriptor::new(iface).unwrap();
-    println!("Rx rings: {}, Tx rings: {} flags: {}", nm.get_rx_rings_count(), nm.get_tx_rings_count(), nm.get_flags());
+    use std::sync::{Mutex,Arc};
 
+    let nm = NetmapDescriptor::new(iface).unwrap();
+    let rx_count = nm.get_rx_rings_count();
+    let tx_count = nm.get_tx_rings_count();
+    println!("Rx rings: {}, Tx rings: {}", rx_count, tx_count);
+
+    let nm = Arc::new(Mutex::new(nm));
     crossbeam::scope(|scope| {
         scope.spawn(|| loop {
             read_uptime();
             thread::sleep_ms(1000);
         });
 
-        for ring in 0..nm.get_rx_rings_count() {
-            let mut ring_nm = nm.clone_ring(ring).unwrap();
-            scope.spawn(move|| rx_loop(&mut ring_nm));
+        for ring in 0..rx_count {
+            let nm = &nm;
+            let ring = ring.clone();
+            scope.spawn(move || {
+                println!("Starting thread for ring {}", ring);
+                let mut ring_nm = {
+                    let nm = nm.lock().unwrap();
+                    nm.clone_ring(ring).unwrap()
+                };
+                rx_loop(&mut ring_nm)
+            });
         }
     });
 }
