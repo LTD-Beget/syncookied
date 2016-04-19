@@ -3,7 +3,7 @@ use std::mem;
 use std::net::Ipv4Addr;
 use std::num::Wrapping;
 
-static MSSTAB: [u16;4] = [ 536, 1300, 1440, 1460 ];
+static MSSTAB: [u16;4] = [ 1460, 1300, 1440, 536 ];
 const COOKIEBITS: u32 = 24;	/* Upper bits store count */
 const COOKIEMASK: u32 = ((1 << COOKIEBITS) - 1);
 
@@ -61,7 +61,7 @@ pub fn generate_cookie_init_sequence(source_addr: Ipv4Addr, dest_addr: Ipv4Addr,
 
     for (idx, val) in MSSTAB.iter().enumerate() {
         if mss >= *val {
-            mssind = (MSSTAB.len() - idx) as u32;
+            mssind = (MSSTAB.len() - idx - 1) as u32;
             mssval = *val;
             break;
         }
