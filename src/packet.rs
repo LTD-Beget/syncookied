@@ -79,13 +79,13 @@ fn build_reply(eth_in: &EthernetPacket, ip_in: &Ipv4Packet, tcp_in: &TcpPacket, 
             {
                 let mut mss = MutableTcpOptionPacket::new(&mut options[0..4]).unwrap();
                 mss.set_number(TcpOptionNumbers::MSS);
-                mss.set_length(&[4]);
+                mss.get_length_raw_mut()[0] = 4;
                 mss.set_data(&[(mss_val >> 8) as u8, (mss_val & 0xff) as u8]);
             }
             { /* XXX hardcode sack */
                 let mut sack = MutableTcpOptionPacket::new(&mut options[4..6]).unwrap();
                 sack.set_number(TcpOptionNumbers::SACK_PERMITTED);
-                sack.set_length(&[2]);
+                sack.get_length_raw_mut()[0] = 2;
             }
             { /* Timestamp */
                 let my_tcp_time = ::TCP_TIME_STAMP.load(Ordering::Relaxed) as u32;
@@ -96,11 +96,13 @@ fn build_reply(eth_in: &EthernetPacket, ip_in: &Ipv4Packet, tcp_in: &TcpPacket, 
                 }
                 let mut ts = MutableTcpOptionPacket::new(&mut options[6..16]).unwrap();
                 ts.set_number(TcpOptionNumbers::TIMESTAMPS);
-                ts.set_length(&[10]);
-                let mut stamps: Vec<u8> = vec![];
-                stamps.extend_from_slice(&u32_to_oct(cookie::synproxy_init_timestamp_cookie(7, 1, 0, my_tcp_time)));
-                stamps.extend_from_slice(their_time);
-                ts.set_data(&stamps);
+                ts.get_length_raw_mut()[0] = 10;
+                let mut stamps = ts.payload_mut();
+                use std::ptr;
+                unsafe {
+                    ptr::copy_nonoverlapping::<u8>(u32_to_oct(cookie::synproxy_init_timestamp_cookie(7, 1, 0, my_tcp_time)).as_ptr(), stamps[..].as_mut_ptr(), 4);
+                    ptr::copy_nonoverlapping::<u8>(their_time.as_ptr(), stamps[4..].as_mut_ptr(), 4);
+                }
             }
             { /* WSCALE */
                 let mut ws = MutableTcpOptionPacket::new(&mut options[16..19]).unwrap();
@@ -133,7 +135,7 @@ fn handle_tcp_packet(source: IpAddr, destination: IpAddr, packet: &[u8]) -> Acti
         //println!("TCP Packet: {}:{} > {}:{}; length: {}", source,
         //            tcp.get_source(), destination, tcp.get_destination(), packet.len());
         if tcp.get_syn() == 1 && tcp.get_ack() == 0 {
-            println!("TCP Packet: {:?}", tcp);
+            //println!("TCP Packet: {:?}", tcp);
             return Action::Reply;
         }
         Action::Forward
