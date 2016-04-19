@@ -105,20 +105,22 @@ impl NetmapDescriptor {
     }
 
     pub fn clone_ring(&self, ring: u16) -> Result<Self,NetmapError> {
-        let mut nm_desc_raw = unsafe { (*self.raw).clone() };
+        let mut nm_desc_raw: netmap_user::nm_desc = unsafe { (*(self.raw)) };
 
         /* XXX: check that we opened it with ALL_NIC before */
         nm_desc_raw.req.nr_flags = netmap::NR_REG_ONE_NIC as u32;
         nm_desc_raw.req.nr_ringid = ring;
+        nm_desc_raw.self_ = &mut nm_desc_raw;
 
-        let ifname = unsafe { CString::from_raw((*self.raw).req.nr_name.as_mut_ptr()).into_string().unwrap() };
+
+        let ifname = unsafe { CString::from_raw((nm_desc_raw).req.nr_name.as_mut_ptr()).into_string().unwrap() };
         let netmap_ifname = CString::new(format!("netmap:{}", ifname)).unwrap();
 
         let netmap_desc = unsafe {
             netmap_user::nm_open(netmap_ifname.as_ptr(),
                                  ptr::null(),
                                  netmap_user::NM_OPEN_NO_MMAP as u64 | netmap_user::NM_OPEN_IFNAME as u64,
-                                 self.raw)
+                                 &mut nm_desc_raw)
         };
         if netmap_desc == ptr::null_mut() {
             return Err(NetmapError::new(format!("Can't open ring {}", ring)));
@@ -198,7 +200,7 @@ impl NetmapDescriptor {
                                 tx_slot.set_flags(netmap::NS_BUF_CHANGED as u16 | netmap::NS_REPORT as u16);
                                 tx_slot.set_len(len as u16);
                                 tx_ring.next_slot();
-                                println!("Sent reply len: {}", len);
+                                //println!("Sent reply len: {}", len);
                             }
                         }
                     }
