@@ -5,6 +5,7 @@ extern crate crossbeam;
 use std::env;
 use std::process;
 use std::thread;
+use std::time;
 
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
@@ -34,13 +35,30 @@ fn get_cpu_count() -> usize {
     } 
 }
 
-fn rx_loop(netmap: &mut NetmapDescriptor) {
+fn rx_loop(ring: usize, netmap: &mut NetmapDescriptor) {
+        let mut stats = netmap::Stats::empty();
         println!("Rx rings: {:?}", netmap.get_rx_rings());
         println!("Tx rings: {:?}", netmap.get_tx_rings());
         thread::sleep_ms(1000);
         //for _ in 0..1000 {
+
+        let mut before = time::Instant::now();
+        let seconds: usize = 10;
+        let ival = time::Duration::new(seconds as u64, 0);
         loop {
-            netmap.poll(packet::handle_input, packet::handle_reply);
+            if let Some(poll_stats) = netmap.poll(packet::handle_input, packet::handle_reply) {
+                stats.received += poll_stats.received;
+                stats.dropped += poll_stats.dropped;
+                stats.replied += poll_stats.replied;
+                stats.forwarded += poll_stats.forwarded;
+                stats.failed += poll_stats.failed;
+            }	
+            if before.elapsed() >= ival {
+                before = time::Instant::now();
+                println!("[RX Thread for ring#{}] received: {}Pkt/s, dropped: {}Pkt/s, replied: {}Pkt/s, forwarded: {}Pkt/s, failed: {}Pkt/s", ring,
+                    stats.received/seconds, stats.dropped/seconds, stats.replied/seconds, stats.forwarded/seconds, stats.failed/seconds);
+                stats.clear();
+            }
         }
         //}
 }
@@ -69,7 +87,7 @@ fn run(iface: &str) {
                     let nm = nm.lock().unwrap();
                     nm.clone_ring(ring).unwrap()
                 };
-                rx_loop(&mut ring_nm)
+                rx_loop(ring as usize, &mut ring_nm)
             });
         }
     });
