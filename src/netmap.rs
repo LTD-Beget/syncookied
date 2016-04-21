@@ -6,7 +6,7 @@ use std::ptr;
 use std::slice;
 use std::default;
 use std::iter::Iterator;
-use std::ffi::CString;
+use std::ffi::{CStr,CString};
 use self::netmap_sys::netmap;
 use self::netmap_sys::netmap_user;
 
@@ -215,8 +215,7 @@ impl NetmapDescriptor {
         nm_desc_raw.req.nr_ringid = ring;
         nm_desc_raw.self_ = &mut nm_desc_raw;
 
-
-        let ifname = unsafe { CString::from_raw((nm_desc_raw).req.nr_name.as_mut_ptr()).into_string().unwrap() };
+        let ifname = unsafe { CStr::from_ptr(nm_desc_raw.req.nr_name.as_ptr()).to_str().unwrap() };
         let netmap_ifname = CString::new(format!("netmap:{}", ifname)).unwrap();
 
         let netmap_desc = unsafe {
