@@ -11,6 +11,7 @@ use pnet::packet::PacketSize;
 
 use ::netmap::{Action,NetmapDescriptor};
 use ::cookie;
+use ::csum;
 
 pub fn handle_input(packet_data: &[u8]) -> Action {
     let eth = EthernetPacket::new(packet_data).unwrap();
@@ -115,7 +116,7 @@ fn build_reply(eth_in: &EthernetPacket, ip_in: &Ipv4Packet, tcp_in: &TcpPacket, 
         }
         let cksum = {
             let tcp = tcp.to_immutable();
-            tcp::ipv4_checksum(&tcp, ip_in.get_destination(), ip_in.get_source(), IpNextHeaderProtocols::Tcp)
+            csum::tcp_checksum(&tcp, ip_in.get_destination(), ip_in.get_source(), IpNextHeaderProtocols::Tcp).to_be()
         };
         tcp.set_checksum(cksum);
         len += tcp.packet_size();

@@ -25,6 +25,7 @@ mod netmap;
 mod cookie;
 mod sha1;
 mod packet;
+mod csum;
 use netmap::{Action,NetmapDescriptor};
 
 pub static TCP_TIME_STAMP: AtomicUsize = ATOMIC_USIZE_INIT;
