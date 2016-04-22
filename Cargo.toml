@@ -7,6 +7,7 @@ build = "build.rs"
 [dependencies]
 libc = "0.2"
 crossbeam = "0.2.5"
+scheduler = "0.1.1"
 
 [dependencies.netmap_sys]
 git = "https://github.com/libpnet/netmap_sys"

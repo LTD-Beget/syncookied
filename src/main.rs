@@ -1,6 +1,7 @@
 extern crate libc;
 extern crate pnet;
 extern crate crossbeam;
+extern crate scheduler;
 
 use std::env;
 use std::process;
@@ -17,6 +18,8 @@ use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet, self};
 use pnet::packet::tcp::{TcpPacket, MutableTcpPacket, MutableTcpOptionPacket, TcpOptionNumbers, self};
 use pnet::packet::MutablePacket;
 use pnet::packet::PacketSize;
+
+use scheduler::{CpuSet,Policy};
 
 mod netmap;
 mod cookie;
@@ -37,14 +40,20 @@ fn get_cpu_count() -> usize {
 
 fn rx_loop(ring: usize, netmap: &mut NetmapDescriptor) {
         let mut stats = netmap::Stats::empty();
+
         println!("Rx rings: {:?}", netmap.get_rx_rings());
         println!("Tx rings: {:?}", netmap.get_tx_rings());
+
+        scheduler::set_self_affinity(CpuSet::single(ring)).expect("setting affinity failed");
+        scheduler::set_self_policy(Policy::Fifo, 20).expect("setting sched policy failed");
+
         thread::sleep_ms(1000);
         //for _ in 0..1000 {
 
         let mut before = time::Instant::now();
         let seconds: usize = 10;
         let ival = time::Duration::new(seconds as u64, 0);
+
         loop {
             if let Some(poll_stats) = netmap.poll(packet::handle_input, packet::handle_reply) {
                 stats.received += poll_stats.received;
