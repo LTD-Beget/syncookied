@@ -80,7 +80,9 @@ fn build_reply(eth_in: &EthernetPacket, ip_in: &Ipv4Packet, tcp_in: &TcpPacket, 
                 let mut mss = MutableTcpOptionPacket::new(&mut options[0..4]).unwrap();
                 mss.set_number(TcpOptionNumbers::MSS);
                 mss.get_length_raw_mut()[0] = 4;
-                mss.set_data(&[(mss_val >> 8) as u8, (mss_val & 0xff) as u8]);
+                let mss_payload = mss.payload_mut();
+                mss_payload[0] = (mss_val >> 8) as u8;
+                mss_payload[1] = (mss_val & 0xff) as u8;
             }
             { /* XXX hardcode sack */
                 let mut sack = MutableTcpOptionPacket::new(&mut options[4..6]).unwrap();
@@ -107,7 +109,7 @@ fn build_reply(eth_in: &EthernetPacket, ip_in: &Ipv4Packet, tcp_in: &TcpPacket, 
             { /* WSCALE */
                 let mut ws = MutableTcpOptionPacket::new(&mut options[16..19]).unwrap();
                 ws.set_number(TcpOptionNumbers::WSCALE);
-                ws.set_length(&[3]);
+                ws.get_length_raw_mut()[0] = 3;
                 ws.set_data(&[7]);
             }
         }
