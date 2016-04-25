@@ -10,6 +10,21 @@ use std::ffi::{CStr,CString};
 use self::netmap_sys::netmap;
 use self::netmap_sys::netmap_user;
 
+/// Forward slot
+pub use self::netmap_sys::netmap::NS_FORWARD;
+
+/// Indicate that buffer was changed
+pub use self::netmap_sys::netmap::NS_BUF_CHANGED;
+
+/// Enable forwarding on ring
+pub use self::netmap_sys::netmap::NR_FORWARD;
+
+#[derive(Debug)]
+pub enum Direction {
+    Input,
+    Output
+}
+
 #[derive(Debug,Default)]
 pub struct Stats {
     pub received: usize,
@@ -128,6 +143,12 @@ impl RxRing {
         let slots = &self.0.slot as *const netmap::netmap_slot;
         unsafe { mem::transmute(slots.offset(cur as isize)) }
     }
+
+    pub fn iter(&mut self) -> RxSlotIter {
+        RxSlotIter {
+            ring: self
+        }
+    }
 }
 
 impl NetmapRing for RxRing {
@@ -153,6 +174,49 @@ impl NetmapRing for RxRing {
     }
 }
 
+pub struct RxSlotIter<'a> {
+    ring: &'a mut RxRing
+}
+
+impl<'a> Iterator for RxSlotIter<'a> {
+    type Item = (&'a mut RxSlot, &'a [u8]);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.ring.is_empty() {
+            return None;
+        }
+        let cur = self.ring.0.cur;
+        let slots = &self.ring.0.slot as *const netmap::netmap_slot;
+        let slot: &mut RxSlot = unsafe { mem::transmute(slots.offset(cur as isize)) };
+        let buf = slot.get_buf(self.ring);
+        self.ring.next_slot();
+        Some((slot, buf))
+    }
+}
+
+struct RxRingIter<'d> {
+    first: u16,
+    last: u16,
+    cur: u16,
+    netmap: &'d NetmapDescriptor,
+}
+
+impl<'d> Iterator for RxRingIter<'d> {
+    type Item = &'d mut RxRing;
+
+    fn next<'a>(&'a mut self) -> Option<&'d mut RxRing> {
+        if self.cur > self.last {
+            return None;
+        }
+        let rx_ring = {
+            let cur = self.cur.clone();
+            self.netmap.get_rx_ring(cur)
+        };
+        self.cur += 1;
+        Some(rx_ring)
+    }
+}
+
 pub struct TxRing(netmap::netmap_ring);
 
 impl TxRing {
@@ -161,6 +225,12 @@ impl TxRing {
         let cur = self.0.cur;
         let slots = &self.0.slot as *const netmap::netmap_slot;
         unsafe { mem::transmute(slots.offset(cur as isize)) }
+    }
+
+    pub fn iter(&mut self) -> TxSlotIter {
+        TxSlotIter {
+            ring: self
+        }
     }
 }
 
@@ -187,6 +257,63 @@ impl NetmapRing for TxRing {
     }
 }
 
+impl<'a> Iterator for &'a mut TxRing {
+    type Item = &'a mut TxSlot;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let cur = self.0.cur;
+        let slots = &self.0.slot as *const netmap::netmap_slot;
+        let slot = unsafe { mem::transmute(slots.offset(cur as isize)) };
+        self.next_slot();
+        slot
+    }
+}
+
+struct TxRingIter<'d> {
+    first: u16,
+    last: u16,
+    cur: u16,
+    netmap: &'d NetmapDescriptor,
+}
+
+impl<'d> Iterator for TxRingIter<'d> {
+    type Item = &'d mut TxRing;
+
+    fn next<'a>(&'a mut self) -> Option<&'d mut TxRing> {
+        if self.cur > self.last {
+            return None;
+        }
+        let tx_ring = {
+            let cur = self.cur.clone();
+            self.netmap.get_tx_ring(cur)
+        };
+        self.cur += 1;
+        Some(tx_ring)
+    }
+}
+
+/// Slot and buffer iterator
+pub struct TxSlotIter<'a> {
+    ring: &'a mut TxRing
+}
+
+impl<'a> Iterator for TxSlotIter<'a> {
+    type Item = (&'a mut TxSlot, &'a mut [u8]);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.ring.is_empty() {
+            return None;
+        }
+        let cur = self.ring.0.cur;
+        let slots = &self.ring.0.slot as *const netmap::netmap_slot;
+        let slot: &mut TxSlot = unsafe { mem::transmute(slots.offset(cur as isize)) };
+        let buf = slot.get_buf_mut(self.ring);
+        self.ring.next_slot();
+        Some((slot, buf))
+    }
+}
+
+/// Netmap descriptor wrapper
 pub struct NetmapDescriptor {
     raw: *mut netmap_user::nm_desc
 }
@@ -205,6 +332,28 @@ impl NetmapDescriptor {
         Ok(NetmapDescriptor {
             raw: netmap_desc
         })
+    }
+
+    pub fn rx_iter<'i, 'd: 'i>(&'d mut self) -> RxRingIter<'i> {
+        let (first, last) = self.get_rx_rings();
+
+        RxRingIter {
+            first: first,
+            last: last,
+            cur: first,
+            netmap: self,
+        }
+    }
+
+    pub fn tx_iter<'i, 'd: 'i>(&'d mut self) -> TxRingIter<'i> {
+        let (first, last) = self.get_tx_rings();
+
+        TxRingIter {
+            first: first,
+            last: last,
+            cur: first,
+            netmap: self,
+        }
     }
 
     pub fn clone_ring(&self, ring: u16) -> Result<Self,NetmapError> {
@@ -254,42 +403,54 @@ impl NetmapDescriptor {
     }
 
     #[inline]
-    fn get_tx_ring(&self, ring: u16) -> Option<&mut TxRing> {
+    fn get_tx_ring(&self, ring: u16) -> &mut TxRing {
         let nifp = unsafe { (*self.raw).nifp };
         let mut tx_ring: &mut TxRing;
 
-        tx_ring = unsafe { mem::transmute(netmap_user::NETMAP_TXRING(nifp, ring as isize)) };
-        if tx_ring.is_empty() {
-            return None;
-        }
-        return Some(tx_ring)
+        return unsafe { mem::transmute(netmap_user::NETMAP_TXRING(nifp, ring as isize)) };
     }
 
     #[inline]
-    fn get_rx_ring(&self, ring: u16) -> Option<&mut RxRing> {
+    fn get_rx_ring(&self, ring: u16) -> &mut RxRing {
         let nifp = unsafe { (*self.raw).nifp };
         let rx_ring: &mut RxRing;
 
-        rx_ring = unsafe { mem::transmute(netmap_user::NETMAP_RXRING(nifp, ring as isize)) };
-        if rx_ring.is_empty() {
-            return None;
-        }
-        return Some(rx_ring)
+        return unsafe { mem::transmute(netmap_user::NETMAP_RXRING(nifp, ring as isize)) };
     }
 
     fn find_free_tx_ring(&self) -> Option<&mut TxRing> {
         let (first, last) = self.get_tx_rings();
 
         for ring in first..last+1 {
-            if let Some(tx_ring) = self.get_tx_ring(ring) {
+            let tx_ring = self.get_tx_ring(ring);
+            if !tx_ring.is_empty() {
                 return Some(tx_ring);
             }
         }
         return None;
     }
 
+    pub fn poll(&mut self, dir: Direction) -> Option<()> {
+        let fd = unsafe { (*self.raw).fd };
+        let mut pollfd: libc::pollfd = unsafe { mem::zeroed() };
+        let mut stats = Stats::empty();
+
+        pollfd.fd = fd;
+        pollfd.events = match dir {
+            Direction::Input => libc::POLLIN,
+            Direction::Output => libc::POLLOUT,
+        };
+
+        let rv = unsafe { libc::poll(&mut pollfd, 1, 1000) };
+        if rv <= 0 {
+            return None;
+        }
+        Some(())
+    }
+
     // TODO: return Result
-    pub fn poll(&mut self, on_receive: fn(&[u8]) -> Action, reply: fn(&[u8], &mut [u8]) -> usize) -> Option<Stats> {
+    /*
+    pub fn poll2(&mut self, on_receive: fn(&[u8]) -> Action, reply: fn(&[u8], &mut [u8]) -> usize) -> Option<Stats> {
         let fd = unsafe { (*self.raw).fd };
         let mut pollfd: libc::pollfd = unsafe { mem::zeroed() };
         let mut rx_ring: &mut RxRing;
@@ -343,4 +504,5 @@ impl NetmapDescriptor {
         }
         Some(stats)
     }
+    */
 }

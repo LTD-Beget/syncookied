@@ -36,7 +36,7 @@ fn build_reply(eth_in: &EthernetPacket, ip_in: &Ipv4Packet, tcp_in: &TcpPacket, 
     let ether_len;
     /* build ethernet packet */
     let mut ether = MutableEthernetPacket::new(reply).unwrap();
-    
+
     ether.set_source(eth_in.get_destination());
     ether.set_destination(eth_in.get_source());
     ether.set_ethertype(EtherTypes::Ipv4);
@@ -59,6 +59,7 @@ fn build_reply(eth_in: &EthernetPacket, ip_in: &Ipv4Packet, tcp_in: &TcpPacket, 
     len += ip.packet_size();
 
     {
+        use std::ptr;
         /* build tcp packet */
         let cookie_time = ::TCP_COOKIE_TIME.load(Ordering::Relaxed);
         let (seq_num, mss_val) = cookie::generate_cookie_init_sequence(
@@ -101,7 +102,6 @@ fn build_reply(eth_in: &EthernetPacket, ip_in: &Ipv4Packet, tcp_in: &TcpPacket, 
                 ts.set_number(TcpOptionNumbers::TIMESTAMPS);
                 ts.get_length_raw_mut()[0] = 10;
                 let mut stamps = ts.payload_mut();
-                use std::ptr;
                 unsafe {
                     ptr::copy_nonoverlapping::<u8>(u32_to_oct(cookie::synproxy_init_timestamp_cookie(7, 1, 0, my_tcp_time)).as_ptr(), stamps[..].as_mut_ptr(), 4);
                     ptr::copy_nonoverlapping::<u8>(their_time.as_ptr(), stamps[4..].as_mut_ptr(), 4);
