@@ -47,14 +47,6 @@ impl Stats {
     }
 }
 
-#[allow(dead_code)]
-#[derive(Debug)]
-pub enum Action {
-    Drop,
-    Forward,
-    Reply
-}
-
 #[derive(Debug)]
 pub struct NetmapError {
     msg: String,
@@ -147,6 +139,7 @@ impl RxRing {
         unsafe { mem::transmute(slots.offset(cur as isize)) }
     }
 
+    #[inline]
     pub fn iter(&mut self) -> RxSlotIter {
         RxSlotIter {
             ring: self
@@ -184,6 +177,7 @@ pub struct RxSlotIter<'a> {
 impl<'a> Iterator for RxSlotIter<'a> {
     type Item = (&'a mut RxSlot, &'a [u8]);
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.ring.is_empty() {
             return None;
@@ -207,6 +201,7 @@ struct RxRingIter<'d> {
 impl<'d> Iterator for RxRingIter<'d> {
     type Item = &'d mut RxRing;
 
+    #[inline]
     fn next<'a>(&'a mut self) -> Option<&'d mut RxRing> {
         if self.cur > self.last {
             return None;
@@ -230,6 +225,7 @@ impl TxRing {
         unsafe { mem::transmute(slots.offset(cur as isize)) }
     }
 
+    #[inline]
     pub fn iter(&mut self) -> TxSlotIter {
         TxSlotIter {
             ring: self
@@ -263,6 +259,7 @@ impl NetmapRing for TxRing {
 impl<'a> Iterator for &'a mut TxRing {
     type Item = &'a mut TxSlot;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         let cur = self.0.cur;
         let slots = &self.0.slot as *const netmap::netmap_slot;
@@ -282,6 +279,7 @@ struct TxRingIter<'d> {
 impl<'d> Iterator for TxRingIter<'d> {
     type Item = &'d mut TxRing;
 
+    #[inline]
     fn next<'a>(&'a mut self) -> Option<&'d mut TxRing> {
         if self.cur > self.last {
             return None;
@@ -303,6 +301,7 @@ pub struct TxSlotIter<'a> {
 impl<'a> Iterator for TxSlotIter<'a> {
     type Item = (&'a mut TxSlot, &'a mut [u8]);
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.ring.is_empty() {
             return None;

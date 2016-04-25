@@ -28,7 +28,8 @@ mod cookie;
 mod sha1;
 mod packet;
 mod csum;
-use netmap::{Action,Direction,NetmapDescriptor,NetmapRing,NetmapSlot};
+use packet::{Action,IngressPacket};
+use netmap::{Direction,NetmapDescriptor,NetmapRing,NetmapSlot};
 
 pub static TCP_TIME_STAMP: AtomicUsize = ATOMIC_USIZE_INIT;
 pub static TCP_COOKIE_TIME: AtomicUsize = ATOMIC_USIZE_INIT;
@@ -41,7 +42,7 @@ fn get_cpu_count() -> usize {
     }
 }
 
-fn tx_loop(ring_num: usize, chan: mpsc::Receiver<([u8;2048], usize)>,
+fn tx_loop(ring_num: usize, chan: mpsc::Receiver<IngressPacket>,
             netmap: &mut NetmapDescriptor) {
     println!("TX loop for ring {:?}", ring_num);
     println!("Tx rings: {:?}", netmap.get_tx_rings());
@@ -56,9 +57,9 @@ fn tx_loop(ring_num: usize, chan: mpsc::Receiver<([u8;2048], usize)>,
         if let Some(_) = netmap.poll(netmap::Direction::Output) {
             for ring in netmap.tx_iter() {
                     for (slot, buf) in ring.iter() {
-                        let (pkt, len) = chan.recv().expect("Expected RX not to die on us");
-                        let len = packet::handle_reply(&pkt[0..len], buf);
-                        slot.set_flags(netmap::NS_BUF_CHANGED as u16 | netmap::NS_REPORT as u16);
+                        let pkt = chan.recv().expect("Expected RX not to die on us");
+                        let len = packet::handle_reply(pkt, buf);
+                        slot.set_flags(netmap::NS_BUF_CHANGED as u16 /* | netmap::NS_REPORT as u16 */);
                         slot.set_len(len as u16);
                         //println!("TX{} Sent reply: {}", ring_num, len);
                         break; // TODO
@@ -68,7 +69,7 @@ fn tx_loop(ring_num: usize, chan: mpsc::Receiver<([u8;2048], usize)>,
     }
 }
 
-fn rx_loop(ring: usize, chan: mpsc::SyncSender<([u8;2048], usize)>,
+fn rx_loop(ring: usize, chan: mpsc::SyncSender<IngressPacket>,
         netmap: &mut NetmapDescriptor) {
         let mut stats = netmap::Stats::empty();
 
@@ -94,13 +95,8 @@ fn rx_loop(ring: usize, chan: mpsc::SyncSender<([u8;2048], usize)>,
                                 slot.set_flags(netmap::NS_FORWARD as u16);
                                 fw = true;
                             },
-                            Action::Reply => {
-                                let mut tmp_buf = [0;2048];
-                                let len = buf.len();
-                                unsafe {
-                                    ptr::copy_nonoverlapping::<u8>(buf.as_ptr(), tmp_buf.as_mut_ptr(), len)
-                                }
-                                chan.send((tmp_buf, len));
+                            Action::Reply(packet) => {
+                                chan.send(packet);
                             }
                         }
                     }
