@@ -28,7 +28,7 @@ mod cookie;
 mod sha1;
 mod packet;
 mod csum;
-use netmap::{Action,NetmapDescriptor,NetmapRing,NetmapSlot};
+use netmap::{Action,Direction,NetmapDescriptor,NetmapRing,NetmapSlot};
 
 pub static TCP_TIME_STAMP: AtomicUsize = ATOMIC_USIZE_INIT;
 pub static TCP_COOKIE_TIME: AtomicUsize = ATOMIC_USIZE_INIT;
@@ -41,13 +41,12 @@ fn get_cpu_count() -> usize {
     }
 }
 
-fn tx_loop(ring: usize, chan: mpsc::Receiver<([u8;2048], usize)>,
+fn tx_loop(ring_num: usize, chan: mpsc::Receiver<([u8;2048], usize)>,
             netmap: &mut NetmapDescriptor) {
-    use std::ptr;
-    println!("TX loop for ring {:?}", ring);
+    println!("TX loop for ring {:?}", ring_num);
     println!("Tx rings: {:?}", netmap.get_tx_rings());
 
-    scheduler::set_self_affinity(CpuSet::single(ring)).expect("setting affinity failed");
+    scheduler::set_self_affinity(CpuSet::single(ring_num)).expect("setting affinity failed");
     scheduler::set_self_policy(Policy::Fifo, 20).expect("setting sched policy failed");
 
     /* wait for card to reinitialize */
@@ -58,8 +57,11 @@ fn tx_loop(ring: usize, chan: mpsc::Receiver<([u8;2048], usize)>,
             for ring in netmap.tx_iter() {
                     for (slot, buf) in ring.iter() {
                         let (pkt, len) = chan.recv().expect("Expected RX not to die on us");
-                        packet::handle_reply(&pkt[0..len], buf);
-                        slot.set_flags(netmap::NS_BUF_CHANGED as u16);
+                        let len = packet::handle_reply(&pkt[0..len], buf);
+                        slot.set_flags(netmap::NS_BUF_CHANGED as u16 | netmap::NS_REPORT as u16);
+                        slot.set_len(len as u16);
+                        //println!("TX{} Sent reply: {}", ring_num, len);
+                        break; // TODO
                     }
             }
         }
@@ -96,7 +98,7 @@ fn rx_loop(ring: usize, chan: mpsc::SyncSender<([u8;2048], usize)>,
                                 let mut tmp_buf = [0;2048];
                                 let len = buf.len();
                                 unsafe {
-                                    ptr::copy_nonoverlapping::<u8>(buf.as_ptr(), tmp_buf.as_mut_ptr(),len)
+                                    ptr::copy_nonoverlapping::<u8>(buf.as_ptr(), tmp_buf.as_mut_ptr(), len)
                                 }
                                 chan.send((tmp_buf, len));
                             }
@@ -134,7 +136,7 @@ fn run(iface: &str) {
                 println!("Starting RX thread for ring {}", ring);
                 let mut ring_nm = {
                     let nm = nm.lock().unwrap();
-                    nm.clone_ring(ring).unwrap()
+                    nm.clone_ring(ring, Direction::Input).unwrap()
                 };
                 rx_loop(ring as usize, tx, &mut ring_nm)
             });
@@ -143,7 +145,7 @@ fn run(iface: &str) {
                 println!("Starting TX thread for ring {}", ring);
                 let mut ring_nm = {
                     let nm = nm.lock().unwrap();
-                    nm.clone_ring(ring).unwrap()
+                    nm.clone_ring(ring, Direction::Output).unwrap()
                 };
                 tx_loop(ring as usize, rx, &mut ring_nm)
             });

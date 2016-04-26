@@ -16,6 +16,9 @@ pub use self::netmap_sys::netmap::NS_FORWARD;
 /// Indicate that buffer was changed
 pub use self::netmap_sys::netmap::NS_BUF_CHANGED;
 
+/// Report when sent
+pub use self::netmap_sys::netmap::NS_REPORT;
+
 /// Enable forwarding on ring
 pub use self::netmap_sys::netmap::NR_FORWARD;
 
@@ -356,11 +359,15 @@ impl NetmapDescriptor {
         }
     }
 
-    pub fn clone_ring(&self, ring: u16) -> Result<Self,NetmapError> {
+    pub fn clone_ring(&self, ring: u16, dir: Direction) -> Result<Self,NetmapError> {
         let mut nm_desc_raw: netmap_user::nm_desc = unsafe { (*(self.raw)) };
 
         /* XXX: check that we opened it with ALL_NIC before */
-        nm_desc_raw.req.nr_flags = netmap::NR_REG_ONE_NIC as u32;
+        let flag = match dir {
+            Direction::Input => 0x2000 /* NR_RX_RINGS_ONLY */,
+            Direction::Output => 0x4000 /* NR_TX_RINGS_ONLY */,
+        } as u32;
+        nm_desc_raw.req.nr_flags = netmap::NR_REG_ONE_NIC as u32 | flag;
         nm_desc_raw.req.nr_ringid = ring;
         nm_desc_raw.self_ = &mut nm_desc_raw;
 

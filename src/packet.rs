@@ -129,6 +129,7 @@ fn build_reply(eth_in: &EthernetPacket, ip_in: &Ipv4Packet, tcp_in: &TcpPacket, 
     };
     ip.set_checksum(ip_cksum);
 
+    //println!("REPLY: {:?}", &ip);
     len
 }
 
