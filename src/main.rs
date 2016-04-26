@@ -57,12 +57,19 @@ fn tx_loop(ring_num: usize, chan: mpsc::Receiver<IngressPacket>,
         if let Some(_) = netmap.poll(netmap::Direction::Output) {
             for ring in netmap.tx_iter() {
                     for (slot, buf) in ring.iter() {
-                        let pkt = chan.recv().expect("Expected RX not to die on us");
-                        let len = packet::handle_reply(pkt, buf);
-                        slot.set_flags(netmap::NS_BUF_CHANGED as u16 /* | netmap::NS_REPORT as u16 */);
-                        slot.set_len(len as u16);
-                        //println!("TX{} Sent reply: {}", ring_num, len);
-                        break; // TODO
+                        match chan.try_recv() {
+                            Ok(pkt) => {
+                                let len = packet::handle_reply(pkt, buf);
+                                slot.set_flags(netmap::NS_BUF_CHANGED as u16 /* | netmap::NS_REPORT as u16 */);
+                                slot.set_len(len as u16);
+                            },
+                            Err(mpsc::TryRecvError::Empty) => {
+                                break;
+                            },
+                            Err(mpsc::TryRecvError::Disconnected) => {
+                                panic!("sender is probably dead, we should go its way")
+                            }
+                        }
                     }
             }
         }
