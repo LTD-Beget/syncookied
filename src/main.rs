@@ -35,6 +35,39 @@ pub static TCP_TIME_STAMP: AtomicUsize = ATOMIC_USIZE_INIT;
 pub static TCP_COOKIE_TIME: AtomicUsize = ATOMIC_USIZE_INIT;
 pub static mut syncookie_secret: [[u32;17];2] = [[0;17];2];
 
+#[derive(Debug,Default)]
+struct RxStats {
+    pub received: usize,
+    pub dropped: usize,
+    pub forwarded: usize,
+    pub queued: usize,
+}
+
+impl RxStats {
+    pub fn empty() -> Self {
+        Default::default()
+    }
+
+    pub fn clear(&mut self) {
+        *self = Default::default();
+    }
+}
+
+#[derive(Debug,Default)]
+struct TxStats {
+    pub sent: usize,
+}
+
+impl TxStats {
+    pub fn empty() -> Self {
+        Default::default()
+    }
+
+    pub fn clear(&mut self) {
+        *self = Default::default();
+    }
+}
+
 // helpers
 fn get_cpu_count() -> usize {
     unsafe {
@@ -44,6 +77,7 @@ fn get_cpu_count() -> usize {
 
 fn tx_loop(ring_num: usize, chan: mpsc::Receiver<IngressPacket>,
             netmap: &mut NetmapDescriptor) {
+    let mut stats = TxStats::empty();
     println!("TX loop for ring {:?}", ring_num);
     println!("Tx rings: {:?}", netmap.get_tx_rings());
 
@@ -53,6 +87,11 @@ fn tx_loop(ring_num: usize, chan: mpsc::Receiver<IngressPacket>,
     /* wait for card to reinitialize */
     thread::sleep_ms(1000);
 
+    let mut before = time::Instant::now();
+    let seconds: usize = 10;
+    let ival = time::Duration::new(seconds as u64, 0);
+    let mut rate: usize = 0;
+
     loop {
         if let Some(_) = netmap.poll(netmap::Direction::Output) {
             for ring in netmap.tx_iter() {
@@ -61,21 +100,38 @@ fn tx_loop(ring_num: usize, chan: mpsc::Receiver<IngressPacket>,
                         let len = packet::handle_reply(pkt, buf);
                         slot.set_flags(netmap::NS_BUF_CHANGED as u16 /* | netmap::NS_REPORT as u16 */);
                         slot.set_len(len as u16);
-                        //println!("TX{} Sent reply: {}", ring_num, len);
-                        break; // TODO
+                        stats.sent += 1;
+
+                        if rate <= 1000 {
+                            break; // do tx sync on every packet if we receive
+                                   // small amount of packets
+                        } else if rate <= 10000 && stats.sent % 64 == 0 {
+                            break; 
+                        } else if rate <= 100_000 && stats.sent % 128 == 0 {
+                            break;
+                        } else if /* rate <= 1000_000 && */ stats.sent % 512 == 0 {
+                            break;
+                        }
                     }
             }
+        }
+        if before.elapsed() >= ival {
+            rate = stats.sent/seconds;
+            println!("[TX#{}]: sent {}Pkts/s", ring_num, rate);
+            stats.clear();
+            before = time::Instant::now();
         }
     }
 }
 
-fn rx_loop(ring: usize, chan: mpsc::SyncSender<IngressPacket>,
+fn rx_loop(ring_num: usize, chan: mpsc::SyncSender<IngressPacket>,
         netmap: &mut NetmapDescriptor) {
-        let mut stats = netmap::Stats::empty();
+        let mut stats = RxStats::empty();
 
+        println!("RX loop for ring {:?}", ring_num);
         println!("Rx rings: {:?}", netmap.get_rx_rings());
 
-        scheduler::set_self_affinity(CpuSet::single(ring)).expect("setting affinity failed");
+        scheduler::set_self_affinity(CpuSet::single(ring_num)).expect("setting affinity failed");
         scheduler::set_self_policy(Policy::Fifo, 20).expect("setting sched policy failed");
 
         thread::sleep_ms(1000);
@@ -89,13 +145,18 @@ fn rx_loop(ring: usize, chan: mpsc::SyncSender<IngressPacket>,
                 for ring in netmap.rx_iter() {
                     let mut fw = false;
                     for (slot, buf) in ring.iter() {
+                        stats.received += 1;
                         match packet::handle_input(buf) {
-                            Action::Drop => {},
+                            Action::Drop => {
+                                stats.dropped += 1;
+                            },
                             Action::Forward => {
+                                stats.forwarded += 1;
                                 slot.set_flags(netmap::NS_FORWARD as u16);
                                 fw = true;
                             },
                             Action::Reply(packet) => {
+                                stats.queued += 1;
                                 chan.send(packet);
                             }
                         }
@@ -104,6 +165,13 @@ fn rx_loop(ring: usize, chan: mpsc::SyncSender<IngressPacket>,
                         ring.set_flags(netmap::NR_FORWARD as u32);
                     }
                 }
+            }
+            if before.elapsed() >= ival {
+                println!("[RX#{}]: received: {}Pkts/s, dropped: {}Pkts/s, forwarded: {}Pkts/s, queued: {}Pkts/s",
+                            ring_num, stats.received/seconds, stats.dropped/seconds,
+                            stats.forwarded/seconds, stats.queued/seconds);
+                stats.clear();
+                before = time::Instant::now();
             }
         }
 }
@@ -126,7 +194,7 @@ fn run(iface: &str) {
         for ring in 0..rx_count {
             let nm = &nm;
             let ring = ring.clone();
-            let (tx, rx) = mpsc::sync_channel(1024);
+            let (tx, rx) = mpsc::sync_channel(1024 * 1024);
 
             scope.spawn(move || {
                 println!("Starting RX thread for ring {}", ring);

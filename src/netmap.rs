@@ -28,25 +28,6 @@ pub enum Direction {
     Output
 }
 
-#[derive(Debug,Default)]
-pub struct Stats {
-    pub received: usize,
-    pub dropped: usize,
-    pub replied: usize,
-    pub forwarded: usize,
-    pub failed: usize,
-}
-
-impl Stats {
-    pub fn empty() -> Self {
-        Default::default()
-    }
-
-    pub fn clear(&mut self) {
-        *self = Default::default();
-    }
-}
-
 #[derive(Debug)]
 pub struct NetmapError {
     msg: String,
@@ -439,7 +420,6 @@ impl NetmapDescriptor {
     pub fn poll(&mut self, dir: Direction) -> Option<()> {
         let fd = unsafe { (*self.raw).fd };
         let mut pollfd: libc::pollfd = unsafe { mem::zeroed() };
-        let mut stats = Stats::empty();
 
         pollfd.fd = fd;
         pollfd.events = match dir {
