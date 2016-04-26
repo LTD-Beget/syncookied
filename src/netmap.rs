@@ -362,12 +362,12 @@ impl NetmapDescriptor {
         let mut nm_desc_raw: netmap_user::nm_desc = unsafe { (*(self.raw)) };
 
         /* XXX: check that we opened it with ALL_NIC before */
-        let flag = match dir {
-            Direction::Input => 0x2000 /* NR_RX_RINGS_ONLY */,
-            Direction::Output => 0x4000 /* NR_TX_RINGS_ONLY */,
-        } as u32;
-        nm_desc_raw.req.nr_flags = netmap::NR_REG_ONE_NIC as u32 | flag;
-        nm_desc_raw.req.nr_ringid = ring;
+        let (flag, ring_flag) = match dir {
+            Direction::Input => (0x2000 /* NR_RX_RINGS_ONLY */, netmap::NETMAP_NO_TX_POLL),
+            Direction::Output => (0x4000 /* NR_TX_RINGS_ONLY */, 0),
+        };
+        nm_desc_raw.req.nr_flags = netmap::NR_REG_ONE_NIC as u32 | flag as u32;
+        nm_desc_raw.req.nr_ringid = ring | ring_flag as u16;
         nm_desc_raw.self_ = &mut nm_desc_raw;
 
         let ifname = unsafe { CStr::from_ptr(nm_desc_raw.req.nr_name.as_ptr()).to_str().unwrap() };
