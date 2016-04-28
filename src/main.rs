@@ -98,7 +98,7 @@ fn tx_loop(ring_num: usize, chan: mpsc::Receiver<IngressPacket>,
                     for (slot, buf) in ring.iter() {
                         let pkt = chan.recv().expect("Expected RX not to die on us");
                         let len = packet::handle_reply(pkt, buf);
-                        slot.set_flags(netmap::NS_BUF_CHANGED as u16 /* | netmap::NS_REPORT as u16 */);
+                        slot.set_flags(netmap::NS_BUF_CHANGED as u16 | netmap::NS_REPORT as u16);
                         slot.set_len(len as u16);
                         stats.sent += 1;
 
@@ -109,7 +109,7 @@ fn tx_loop(ring_num: usize, chan: mpsc::Receiver<IngressPacket>,
                             break; 
                         } else if rate <= 100_000 && stats.sent % 128 == 0 {
                             break;
-                        } else if /* rate <= 1000_000 && */ stats.sent % 512 == 0 {
+                        } else if /* rate <= 1000_000 && */ stats.sent % 1024 == 0 {
                             break;
                         }
                     }
@@ -122,6 +122,102 @@ fn tx_loop(ring_num: usize, chan: mpsc::Receiver<IngressPacket>,
             before = time::Instant::now();
         }
     }
+}
+
+enum HostOrIngress {
+    Host(([u8;2048], usize)),
+    Ingress(IngressPacket),
+}
+
+fn tx_from_host_loop(ring_num: usize, chan: mpsc::Receiver<HostOrIngress>,
+            netmap: &mut NetmapDescriptor) {
+    let mut stats = TxStats::empty();
+    println!("TX loop for ring {:?}", ring_num);
+    println!("Tx rings: {:?}", netmap.get_tx_rings());
+
+    scheduler::set_self_affinity(CpuSet::single(ring_num)).expect("setting affinity failed");
+    scheduler::set_self_policy(Policy::Fifo, 20).expect("setting sched policy failed");
+
+    /* wait for card to reinitialize */
+    thread::sleep_ms(1000);
+
+    let mut before = time::Instant::now();
+    let seconds: usize = 10;
+    let ival = time::Duration::new(seconds as u64, 0);
+    let mut rate: usize = 0;
+
+    loop {
+        if let Some(_) = netmap.poll(netmap::Direction::Output) {
+            for ring in netmap.tx_iter() {
+                    for (slot, buf) in ring.iter() {
+                        let pkt = chan.recv().expect("Expected RX not to die on us");
+                        let len = match pkt {
+                            HostOrIngress::Host((pkt, len)) => {
+                                unsafe { ptr::copy_nonoverlapping(pkt.as_ptr(), buf.as_mut_ptr(), len) };
+                                len
+                            },
+                            HostOrIngress::Ingress(ing) => {
+                                packet::handle_reply(ing, buf)
+                            },
+                        };
+                        slot.set_flags(netmap::NS_BUF_CHANGED as u16 | netmap::NS_REPORT as u16);
+                        slot.set_len(len as u16);
+                        stats.sent += 1;
+
+                        if rate <= 1000 {
+                            break; // do tx sync on every packet if we receive
+                                   // small amount of packets
+                        } else if rate <= 10000 && stats.sent % 64 == 0 {
+                            break; 
+                        } else if rate <= 100_000 && stats.sent % 128 == 0 {
+                            break;
+                        } else if /* rate <= 1000_000 && */ stats.sent % 1024 == 0 {
+                            break;
+                        }
+                    }
+            }
+        }
+        if before.elapsed() >= ival {
+            rate = stats.sent/seconds;
+            println!("[TX from HOST#{}]: sent {}Pkts/s", ring_num, rate);
+            stats.clear();
+            before = time::Instant::now();
+        }
+    }
+}
+
+
+
+fn host_rx_loop(ring_num: usize, netmap: &mut NetmapDescriptor, chan: mpsc::SyncSender<HostOrIngress>) {
+        loop {
+            if let Some(_) = netmap.poll(netmap::Direction::Input) {
+                for ring in netmap.rx_iter() {
+                    for (slot, buf) in ring.iter() {
+                        //println!("HOST RX pkt");
+                        //packet::dump_input(&buf);
+                        let mut v = [0;2048];
+                        unsafe {
+                            ptr::copy_nonoverlapping(buf.as_ptr(), v.as_mut_ptr(), buf.len());
+                        }
+                        chan.send(HostOrIngress::Host((v, buf.len())));
+                        //slot.set_flags(netmap::NS_FORWARD as u16);
+                    }
+                    //ring.set_flags(netmap::NR_FORWARD as u32);
+                }
+                //netmap.sync();
+            }
+/*
+            if let Some(_) = netmap.poll(netmap::Direction::Output) {
+                for ring in netmap.tx_iter() {
+                    for (slot, buf) in ring.iter() {
+                        println!("HOST TX pkt");
+                        slot.set_flags(netmap::NS_FORWARD as u16);
+                    }
+                    ring.set_flags(netmap::NR_FORWARD as u32);
+                }
+            }
+*/
+        }
 }
 
 fn rx_loop(ring_num: usize, chan: mpsc::SyncSender<IngressPacket>,
@@ -191,7 +287,7 @@ fn run(iface: &str) {
             thread::sleep_ms(1000);
         });
 
-        for ring in 0..rx_count {
+        for ring in 0..rx_count-1 {
             let nm = &nm;
             let ring = ring.clone();
             let (tx, rx) = mpsc::sync_channel(1024 * 1024);
@@ -212,6 +308,48 @@ fn run(iface: &str) {
                     nm.clone_ring(ring, Direction::Output).unwrap()
                 };
                 tx_loop(ring as usize, rx, &mut ring_nm)
+            });
+        }
+
+        {
+            let nm = &nm;
+            let ring = rx_count;
+
+            let (tx, rx) = mpsc::sync_channel(1024 * 1024);
+
+            {
+                let tx = tx.clone();
+                scope.spawn(move || {
+                    println!("Starting Host RX thread for ring {}", ring);
+                    let mut ring_nm = {
+                        let nm = nm.lock().unwrap();
+                        nm.clone_ring(ring, Direction::Input).unwrap()
+                    };
+                    host_rx_loop(ring as usize, &mut ring_nm, tx)
+                });
+            }
+
+            {
+                let tx = tx.clone();
+                scope.spawn(move || {
+                    println!("Starting Host RX thread for ring {}", ring);
+                    let mut ring_nm = {
+                        let nm = nm.lock().unwrap();
+                        nm.clone_ring(ring, Direction::Input).unwrap()
+                    };
+                    host_rx_loop(ring as usize, &mut ring_nm, tx)
+                });
+            }
+
+            let ring = rx_count - 1;
+
+            scope.spawn(move || {
+                println!("Starting TX thread for HOST ring {}", ring);
+                let mut ring_nm = {
+                    let nm = nm.lock().unwrap();
+                    nm.clone_ring(ring, Direction::Output).unwrap()
+                };
+                tx_from_host_loop(ring as usize, rx, &mut ring_nm)
             });
         }
     });

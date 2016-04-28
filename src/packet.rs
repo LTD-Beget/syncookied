@@ -42,6 +42,18 @@ impl Default for IngressPacket {
     }
 }
 
+pub fn dump_input(packet_data: &[u8]) {
+    let eth = EthernetPacket::new(packet_data).unwrap();
+    println!("{:?}", &eth);
+    match eth.get_ethertype() {
+        EtherTypes::Ipv4 => {
+            let ipv4 = Ipv4Packet::new(eth.payload());
+            println!("{:?}", ipv4);
+        },
+        _ => {},
+    };
+}
+
 pub fn handle_input(packet_data: &[u8]) -> Action {
     let mut pkt: IngressPacket = Default::default();
     let eth = EthernetPacket::new(packet_data).unwrap();

@@ -164,7 +164,7 @@ impl<'a> Iterator for RxSlotIter<'a> {
             return None;
         }
         let cur = self.ring.0.cur;
-        let slots = &self.ring.0.slot as *const netmap::netmap_slot;
+        let slots = self.ring.0.slot.as_mut_ptr();
         let slot: &mut RxSlot = unsafe { mem::transmute(slots.offset(cur as isize)) };
         let buf = slot.get_buf(self.ring);
         self.ring.next_slot();
@@ -306,7 +306,7 @@ unsafe impl Send for NetmapDescriptor {}
 impl NetmapDescriptor {
     pub fn new(iface: &str) -> Result<Self, NetmapError> {
         let base_nmd: netmap::nmreq = unsafe { mem::zeroed() };
-        let netmap_iface = CString::new(format!("netmap:{}", iface)).unwrap();
+        let netmap_iface = CString::new(format!("netmap:{}*", iface)).unwrap();
 
         let netmap_desc = unsafe { netmap_user::nm_open(netmap_iface.as_ptr(), &base_nmd, 0, ptr::null()) };
         if netmap_desc == ptr::null_mut() {
@@ -348,7 +348,9 @@ impl NetmapDescriptor {
             Direction::Output => (0x4000 /* NR_TX_RINGS_ONLY */, 0),
         };
         nm_desc_raw.req.nr_flags = netmap::NR_REG_ONE_NIC as u32 | flag as u32;
+        if ring == 16 { nm_desc_raw.req.nr_flags = netmap::NR_REG_SW as u32 };
         nm_desc_raw.req.nr_ringid = ring | ring_flag as u16;
+        if ring == 16 { nm_desc_raw.req.nr_ringid = ring };
         nm_desc_raw.self_ = &mut nm_desc_raw;
 
         let ifname = unsafe { CStr::from_ptr(nm_desc_raw.req.nr_name.as_ptr()).to_str().unwrap() };
@@ -369,11 +371,13 @@ impl NetmapDescriptor {
     }
 
     pub fn get_rx_rings_count(&self) -> u16 {
-        unsafe { (*self.raw).req.nr_rx_rings }
+        let nifp = unsafe { (*self.raw).nifp };
+        unsafe { (*nifp).ni_rx_rings as u16 }
     }
 
     pub fn get_tx_rings_count(&self) -> u16 {
-        unsafe { (*self.raw).req.nr_tx_rings }
+        let nifp = unsafe { (*self.raw).nifp };
+        unsafe { (*nifp).ni_tx_rings as u16 }
     }
 
     pub fn get_flags(&self) -> u32 {
@@ -415,6 +419,11 @@ impl NetmapDescriptor {
             }
         }
         return None;
+    }
+
+    pub fn sync(&self) {
+        let fd = unsafe { (*self.raw).fd };
+        unsafe { libc::ioctl(fd, netmap::NIOCTXSYNC as u64) };
     }
 
     pub fn poll(&mut self, dir: Direction) -> Option<()> {
