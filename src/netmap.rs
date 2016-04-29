@@ -207,9 +207,10 @@ impl TxRing {
     }
 
     #[inline]
-    pub fn iter(&mut self) -> TxSlotIter {
+    pub fn iter(&mut self, fd: i32) -> TxSlotIter {
         TxSlotIter {
-            ring: self
+            ring: self,
+            fd: fd
         }
     }
 }
@@ -276,7 +277,8 @@ impl<'d> Iterator for TxRingIter<'d> {
 
 /// Slot and buffer iterator
 pub struct TxSlotIter<'a> {
-    ring: &'a mut TxRing
+    ring: &'a mut TxRing,
+    fd: i32
 }
 
 impl<'a> Iterator for TxSlotIter<'a> {
@@ -284,14 +286,19 @@ impl<'a> Iterator for TxSlotIter<'a> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
+        use std::sync::atomic::{fence,Ordering};
+        //unsafe { libc::ioctl(self.fd, netmap::NIOCTXSYNC as u64, 0 as u64) };
+
         if self.ring.is_empty() {
             return None;
         }
+        fence(Ordering::SeqCst);
         let cur = self.ring.0.cur;
-        let slots = &self.ring.0.slot as *const netmap::netmap_slot;
+        let slots = self.ring.0.slot.as_mut_ptr();
         let slot: &mut TxSlot = unsafe { mem::transmute(slots.offset(cur as isize)) };
         let buf = slot.get_buf_mut(self.ring);
         self.ring.next_slot();
+        //unsafe { libc::ioctl(self.fd, netmap::NIOCTXSYNC as u64, 0 as u64) };
         Some((slot, buf))
     }
 }
@@ -421,8 +428,11 @@ impl NetmapDescriptor {
         return None;
     }
 
-    pub fn sync(&self) {
-        let fd = unsafe { (*self.raw).fd };
+    pub fn get_fd(&self) -> i32 {
+        unsafe { (*self.raw).fd }
+    }
+
+    pub fn sync(fd: i32) {
         unsafe { libc::ioctl(fd, netmap::NIOCTXSYNC as u64) };
     }
 
