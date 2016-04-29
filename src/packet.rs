@@ -64,8 +64,13 @@ pub fn handle_input(packet_data: &[u8]) -> Action {
 }
 
 #[inline]
-pub fn handle_reply(pkt: IngressPacket, tx_slice: &mut [u8]) -> usize {
-    build_reply(&pkt, tx_slice)
+pub fn handle_reply(pkt: IngressPacket, tx_slice: &mut [u8]) -> Option<usize> {
+    let len = tx_slice.len();
+    if len < 78 {
+        None
+    } else {
+        Some(build_reply(&pkt, tx_slice))
+    }
 }
 
 #[inline]

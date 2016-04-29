@@ -22,3 +22,6 @@ branch = "tcp+slice"
 
 [build-dependencies]
 gcc = "0.3.26"
+
+[profile.release]
+debug = true

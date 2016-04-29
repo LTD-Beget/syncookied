@@ -56,6 +56,7 @@ impl RxStats {
 #[derive(Debug,Default)]
 struct TxStats {
     pub sent: usize,
+    pub failed: usize,
 }
 
 impl TxStats {
@@ -98,21 +99,24 @@ fn tx_loop(ring_num: usize, chan: mpsc::Receiver<IngressPacket>,
             for ring in netmap.tx_iter() {
                     for (slot, buf) in ring.iter(fd) {
                         let pkt = chan.recv().expect("Expected RX not to die on us");
-// DO SYNC
-                        let len = packet::handle_reply(pkt, buf);
-                        //println!("[TX#{}] SENDING PACKET\n", ring_num);
-                        slot.set_flags(netmap::NS_BUF_CHANGED as u16 | netmap::NS_REPORT as u16);
-                        slot.set_len(len as u16);
-                        stats.sent += 1;
+                        if let Some(len) = packet::handle_reply(pkt, buf) {
+                            //println!("[TX#{}] SENDING PACKET\n", ring_num);
+                            slot.set_flags(netmap::NS_BUF_CHANGED as u16 | netmap::NS_REPORT as u16);
+                            slot.set_len(len as u16);
+                            stats.sent += 1;
 
-                        if rate <= 1000 {
-                            break; // do tx sync on every packet if we receive
-                                   // small amount of packets
-                        } else if rate <= 10000 && stats.sent % 64 == 0 {
-                            break; 
-                        } else if rate <= 100_000 && stats.sent % 128 == 0 {
-                            break;
-                        } else if /* rate <= 1000_000 && */ stats.sent % 1024 == 0 {
+                            if rate <= 1000 {
+                                break; // do tx sync on every packet if we receive
+                                       // small amount of packets
+                            } else if rate <= 10000 && stats.sent % 64 == 0 {
+                                break; 
+                            } else if rate <= 100_000 && stats.sent % 128 == 0 {
+                                break;
+                            } else if /* rate <= 1000_000 && */ stats.sent % 1024 == 0 {
+                                break;
+                            }
+                        } else {
+                            stats.failed += 1;
                             break;
                         }
                     }
@@ -120,7 +124,7 @@ fn tx_loop(ring_num: usize, chan: mpsc::Receiver<IngressPacket>,
         }
         if before.elapsed() >= ival {
             rate = stats.sent/seconds;
-            println!("[TX#{}]: sent {}Pkts/s", ring_num, rate);
+            println!("[TX#{}]: sent {}Pkts/s, failed {}Pkts/s", ring_num, rate, stats.failed/seconds);
             stats.clear();
             before = time::Instant::now();
         }
@@ -133,12 +137,18 @@ enum HostOrIngress {
 }
 
 fn host_rx_loop(ring_num: usize, netmap: &mut NetmapDescriptor) {
+        println!("HOST RX loop for ring {:?}", ring_num);
+        println!("Rx rings: {:?}", netmap.get_rx_rings());
+
+        scheduler::set_self_affinity(CpuSet::single(ring_num)).expect("setting affinity failed");
+        scheduler::set_self_policy(Policy::Fifo, 20).expect("setting sched policy failed");
+
         loop {
             if let Some(_) = netmap.poll(netmap::Direction::Input) {
                 for ring in netmap.rx_iter() {
-                    for (slot, buf) in ring.iter() {
-                        println!("HOST RX pkt");
-                        packet::dump_input(&buf);
+                    for (slot, _) in ring.iter() {
+                        //println!("HOST RX pkt");
+                        //packet::dump_input(&buf);
                         slot.set_flags(netmap::NS_FORWARD as u16);
                     }
                     ring.set_flags(netmap::NR_FORWARD as u32);
