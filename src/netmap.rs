@@ -355,9 +355,8 @@ impl NetmapDescriptor {
             Direction::Output => (0x4000 /* NR_TX_RINGS_ONLY */, 0),
         };
         nm_desc_raw.req.nr_flags = netmap::NR_REG_ONE_NIC as u32 | flag as u32;
-        if ring == 16 { nm_desc_raw.req.nr_flags = netmap::NR_REG_SW as u32 };
+        if ring == self.get_rx_rings_count() { nm_desc_raw.req.nr_flags = netmap::NR_REG_SW as u32 | flag };
         nm_desc_raw.req.nr_ringid = ring | ring_flag as u16;
-        if ring == 16 { nm_desc_raw.req.nr_ringid = ring };
         nm_desc_raw.self_ = &mut nm_desc_raw;
 
         let ifname = unsafe { CStr::from_ptr(nm_desc_raw.req.nr_name.as_ptr()).to_str().unwrap() };
