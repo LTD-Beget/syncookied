@@ -134,11 +134,6 @@ fn tx_loop(ring_num: usize, chan: mpsc::Receiver<IngressPacket>,
     }
 }
 
-enum HostOrIngress {
-    Host(([u8;2048], usize)),
-    Ingress(IngressPacket),
-}
-
 fn host_rx_loop(ring_num: usize, netmap: &mut NetmapDescriptor) {
         println!("HOST RX loop for ring {:?}", ring_num);
         println!("Rx rings: {:?}", netmap.get_rx_rings());
@@ -215,12 +210,25 @@ fn rx_loop(ring_num: usize, chan: mpsc::SyncSender<IngressPacket>,
 fn run(rx_iface: &str, tx_iface: &str) {
     use std::sync::{Mutex,Arc};
 
-    let nm = NetmapDescriptor::new(rx_iface).unwrap();
-    let rx_count = nm.get_rx_rings_count();
-    let tx_count = nm.get_tx_rings_count();
-    println!("Rx rings: {}, Tx rings: {}", rx_count, tx_count);
+    let rx_nm = Arc::new(Mutex::new(NetmapDescriptor::new(rx_iface).unwrap()));
+    let tx_nm = if rx_iface == tx_iface {
+         rx_nm.clone()
+     } else {
+         Arc::new(Mutex::new(NetmapDescriptor::new(tx_iface).unwrap()))
+    };
+    let rx_count = {
+        let rx_nm = rx_nm.lock().unwrap();
+        rx_nm.get_rx_rings_count()
+    };
+    let tx_count = {
+        let tx_nm = tx_nm.lock().unwrap();
+        tx_nm.get_tx_rings_count()
+    };
+    println!("{} Rx rings @ {}, {} Tx rings @ {}", rx_count, rx_iface, tx_count, tx_iface);
+    if tx_count < rx_count {
+        panic!("We need at least as much Tx rings as Rx rings")
+    }
 
-    let nm = Arc::new(Mutex::new(nm));
     crossbeam::scope(|scope| {
         scope.spawn(|| loop {
             read_uptime();
@@ -228,23 +236,24 @@ fn run(rx_iface: &str, tx_iface: &str) {
         });
 
         for ring in 0..rx_count {
-            let nm = &nm;
-            let ring = ring.clone();
+            let ring = ring;
             let (tx, rx) = mpsc::sync_channel(1024 * 1024);
 
+            let rx_nm = rx_nm.clone();
             scope.spawn(move || {
-                println!("Starting RX thread for ring {}", ring);
+                println!("Starting RX thread for ring {} at {}", ring, rx_iface);
                 let mut ring_nm = {
-                    let nm = nm.lock().unwrap();
+                    let nm = rx_nm.lock().unwrap();
                     nm.clone_ring(ring, Direction::Input).unwrap()
                 };
                 rx_loop(ring as usize, tx, &mut ring_nm)
             });
 
+            let tx_nm = tx_nm.clone();
             scope.spawn(move || {
-                println!("Starting TX thread for ring {}", ring);
+                println!("Starting TX thread for ring {} at {}", ring, tx_iface);
                 let mut ring_nm = {
-                    let nm = nm.lock().unwrap();
+                    let nm = tx_nm.lock().unwrap();
                     nm.clone_ring(ring, Direction::Output).unwrap()
                 };
                 tx_loop(ring as usize, rx, &mut ring_nm)
@@ -252,7 +261,7 @@ fn run(rx_iface: &str, tx_iface: &str) {
         }
 
         {
-            let nm = &nm;
+            let nm = rx_nm.clone();
             let ring = rx_count;
 
             scope.spawn(move || {
