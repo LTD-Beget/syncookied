@@ -351,7 +351,7 @@ impl NetmapDescriptor {
 
         /* XXX: check that we opened it with ALL_NIC before */
         let (flag, ring_flag) = match dir {
-            Direction::Input => (0x2000 /* NR_RX_RINGS_ONLY */, netmap::NETMAP_NO_TX_POLL),
+            Direction::Input => (0x2000 /* NR_RX_RINGS_ONLY */, 0 /* netmap::NETMAP_NO_TX_POLL */),
             Direction::Output => (0x4000 /* NR_TX_RINGS_ONLY */, 0),
         };
         nm_desc_raw.req.nr_flags = netmap::NR_REG_ONE_NIC as u32 | flag as u32;
