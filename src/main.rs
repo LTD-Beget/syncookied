@@ -2,6 +2,7 @@ extern crate libc;
 extern crate pnet;
 extern crate crossbeam;
 extern crate scheduler;
+extern crate clap;
 
 use std::env;
 use std::ptr;
@@ -22,6 +23,8 @@ use pnet::packet::MutablePacket;
 use pnet::packet::PacketSize;
 
 use scheduler::{CpuSet,Policy};
+
+use clap::{Arg, App, SubCommand};
 
 mod netmap;
 mod cookie;
@@ -109,7 +112,7 @@ fn tx_loop(ring_num: usize, chan: mpsc::Receiver<IngressPacket>,
                                 break; // do tx sync on every packet if we receive
                                        // small amount of packets
                             } else if rate <= 10000 && stats.sent % 64 == 0 {
-                                break; 
+                                break;
                             } else if rate <= 100_000 && stats.sent % 128 == 0 {
                                 break;
                             } else if /* rate <= 1000_000 && */ stats.sent % 1024 == 0 {
@@ -209,10 +212,10 @@ fn rx_loop(ring_num: usize, chan: mpsc::SyncSender<IngressPacket>,
         }
 }
 
-fn run(iface: &str) {
+fn run(rx_iface: &str, tx_iface: &str) {
     use std::sync::{Mutex,Arc};
 
-    let nm = NetmapDescriptor::new(iface).unwrap();
+    let nm = NetmapDescriptor::new(rx_iface).unwrap();
     let rx_count = nm.get_rx_rings_count();
     let tx_count = nm.get_tx_rings_count();
     println!("Rx rings: {}, Tx rings: {}", rx_count, tx_count);
@@ -311,9 +314,28 @@ pub fn read_uptime() {
 }
 
 fn main() {
-    let iface = env::args().nth(1).unwrap();
+    let matches = App::new("syncookied")
+                              .version("0.1")
+                              .author("Alexander Polyakov <apolyakov@beget.ru>")
+                              .arg(Arg::with_name("in")
+                                   .short("i")
+                                   .long("input-interface")
+                                   .value_name("iface")
+                                   .help("Interface to receive packets on")
+                                   .required(true)
+                                   .takes_value(true))
+                               .arg(Arg::with_name("out")
+                                   .short("o")
+                                   .long("output-interface")
+                                   .value_name("iface")
+                                   .help("Interface to send packets on (input interface will be used if not set)")
+                                   .takes_value(true))
+                               .get_matches();
+
+    let rx_iface = matches.value_of("in").expect("Expected valid input interface");
+    let tx_iface = matches.value_of("out").unwrap_or(rx_iface);
     let ncpus = get_cpu_count();
-    println!("interface: {} cores: {}", iface, ncpus);
+    println!("interfaces: [Rx: {}, Tx: {}] cores: {}", rx_iface, tx_iface, ncpus);
     read_uptime();
-    run(&iface);
+    run(&rx_iface, &tx_iface);
 }
