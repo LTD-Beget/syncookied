@@ -174,7 +174,7 @@ fn build_reply(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
     ip.set_total_length((len - ether_len) as u16);
     let ip_cksum = {
         let ip = ip.to_immutable();
-        csum::ip_checksum(&ip)
+        csum::ip_checksum(&ip).to_be()
     };
     ip.set_checksum(ip_cksum);
 
