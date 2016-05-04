@@ -21,6 +21,7 @@ use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet, self};
 use pnet::packet::tcp::{TcpPacket, MutableTcpPacket, MutableTcpOptionPacket, TcpOptionNumbers, self};
 use pnet::packet::MutablePacket;
 use pnet::packet::PacketSize;
+use pnet::util::MacAddr;
 
 use scheduler::{CpuSet,Policy};
 
@@ -72,6 +73,11 @@ impl TxStats {
     }
 }
 
+enum OutgoingPacket {
+    Ingress(IngressPacket),
+    Forwarded(([u8;2048], usize))
+}
+
 // helpers
 fn get_cpu_count() -> usize {
     unsafe {
@@ -79,7 +85,7 @@ fn get_cpu_count() -> usize {
     }
 }
 
-fn tx_loop(ring_num: u16, cpu: usize, chan: mpsc::Receiver<IngressPacket>,
+fn tx_loop(ring_num: u16, cpu: usize, chan: mpsc::Receiver<OutgoingPacket>,
             netmap: &mut NetmapDescriptor) {
     let mut stats = TxStats::empty();
     println!("TX loop for ring {:?}", ring_num);
@@ -101,25 +107,35 @@ fn tx_loop(ring_num: u16, cpu: usize, chan: mpsc::Receiver<IngressPacket>,
         if let Some(_) = netmap.poll(netmap::Direction::Output) {
             for ring in netmap.tx_iter() {
                     for (slot, buf) in ring.iter(fd) {
-                        let pkt = chan.recv().expect("Expected RX not to die on us");
-                        if let Some(len) = packet::handle_reply(pkt, buf) {
-                            //println!("[TX#{}] SENDING PACKET\n", ring_num);
-                            slot.set_flags(netmap::NS_BUF_CHANGED as u16 | netmap::NS_REPORT as u16);
-                            slot.set_len(len as u16);
-                            stats.sent += 1;
-
-                            if rate <= 1000 {
-                                break; // do tx sync on every packet if we receive
-                                       // small amount of packets
-                            } else if rate <= 10000 && stats.sent % 64 == 0 {
-                                break;
-                            } else if rate <= 100_000 && stats.sent % 128 == 0 {
-                                break;
-                            } else if /* rate <= 1000_000 && */ stats.sent % 1024 == 0 {
-                                break;
+                        let mut pkt = chan.recv().expect("Expected RX not to die on us");
+                        match pkt {
+                            OutgoingPacket::Ingress(pkt) => {
+                                     if let Some(len) = packet::handle_reply(pkt, buf) {
+                                        //println!("[TX#{}] SENDING PACKET\n", ring_num);
+                                        slot.set_flags(netmap::NS_BUF_CHANGED as u16 | netmap::NS_REPORT as u16);
+                                        slot.set_len(len as u16);
+                                        stats.sent += 1;
+                                    } else {
+                                        stats.failed += 1;
+                                        break;
+                                    }
+                                },
+                            OutgoingPacket::Forwarded((mut buf, len)) => {
+                                let mut eth = MutableEthernetPacket::new(&mut buf[0..len]).unwrap();
+                                eth.set_destination(MacAddr::new(0x90, 0xe2, 0xba, 0xb8, 0x56, 0x89));
+                                slot.set_flags(netmap::NS_BUF_CHANGED as u16 | netmap::NS_REPORT as u16);
+                                slot.set_len(len as u16);
+                                stats.sent += 1;
                             }
-                        } else {
-                            stats.failed += 1;
+                        };
+                        if rate <= 1000 {
+                            break; // do tx sync on every packet if we receive
+                            // small amount of packets
+                        } else if rate <= 10000 && stats.sent % 64 == 0 {
+                            break;
+                        } else if rate <= 100_000 && stats.sent % 128 == 0 {
+                            break;
+                        } else if /* rate <= 1000_000 && */ stats.sent % 1024 == 0 {
                             break;
                         }
                     }
@@ -155,7 +171,7 @@ fn host_rx_loop(ring_num: usize, netmap: &mut NetmapDescriptor) {
         }
 }
 
-fn rx_loop(ring_num: u16, cpu: usize, chan: mpsc::SyncSender<IngressPacket>,
+fn rx_loop(ring_num: u16, cpu: usize, chan: mpsc::SyncSender<OutgoingPacket>,
         netmap: &mut NetmapDescriptor) {
         let mut stats = RxStats::empty();
 
@@ -183,18 +199,24 @@ fn rx_loop(ring_num: u16, cpu: usize, chan: mpsc::SyncSender<IngressPacket>,
                             },
                             Action::Forward => {
                                 stats.forwarded += 1;
-                                slot.set_flags(netmap::NS_FORWARD as u16);
-                                fw = true;
+                                //slot.set_flags(netmap::NS_FORWARD as u16);
+                                //fw = true;
+                                let mut tmp = [0;2048];
+                                let len = buf.len();
+                                unsafe {
+                                    ptr::copy_nonoverlapping(buf.as_ptr(), tmp.as_mut_ptr(), len);
+                                };
+                                chan.send(OutgoingPacket::Forwarded((tmp, len)));
                             },
                             Action::Reply(packet) => {
                                 stats.queued += 1;
-                                chan.send(packet);
-                            }
+                                chan.send(OutgoingPacket::Ingress(packet));
+                            },
                         }
                     }
-                    if fw {
+                    /*if fw {
                         ring.set_flags(netmap::NR_FORWARD as u32);
-                    }
+                    }*/
                 }
             }
             if before.elapsed() >= ival {

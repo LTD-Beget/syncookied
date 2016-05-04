@@ -17,7 +17,7 @@ use ::csum;
 #[derive(Debug)]
 pub enum Action {
     Drop,
-    Forward(Option<MacAddr>),
+    Forward,
     Reply(IngressPacket)
 }
 
@@ -59,7 +59,6 @@ pub fn handle_input(packet_data: &[u8]) -> Action {
     let eth = EthernetPacket::new(packet_data).unwrap();
     match handle_ether_packet(&eth, &mut pkt) {
         Action::Reply(_) => Action::Reply(pkt),
-        Action::Forward(_) => Action::Forward(MacAddr::new(0x90, 0xe2, 0xba, 0xb8, 0x56, 0x89)),
         x@_ => x,
     }
 }
@@ -203,7 +202,7 @@ fn handle_tcp_packet(source: IpAddr, destination: IpAddr, packet: &[u8],
             pkt.tcp_mss = 1460; /* HACK */
             return Action::Reply(IngressPacket::default());
         }
-        Action::Forward(None)
+        Action::Forward
     } else {
         println!("Malformed TCP Packet");
         Action::Drop
@@ -215,7 +214,7 @@ fn handle_transport_protocol(source: IpAddr, destination: IpAddr,
                              pkt: &mut IngressPacket) -> Action {
     match protocol {
         IpNextHeaderProtocols::Tcp  => handle_tcp_packet(source, destination, packet, pkt),
-        _ => Action::Forward(None),
+        _ => Action::Forward
     }
 }
 
@@ -242,6 +241,6 @@ fn handle_ether_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket) -> Ac
             pkt.ether_dest = ethernet.get_destination();
             handle_ipv4_packet(ethernet, pkt)
         },
-        _  => Action::Forward(None),
+        _  => Action::Forward
     }
 }
