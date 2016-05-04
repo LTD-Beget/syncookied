@@ -79,13 +79,13 @@ fn get_cpu_count() -> usize {
     }
 }
 
-fn tx_loop(ring_num: usize, chan: mpsc::Receiver<IngressPacket>,
+fn tx_loop(ring_num: u16, cpu: usize, chan: mpsc::Receiver<IngressPacket>,
             netmap: &mut NetmapDescriptor) {
     let mut stats = TxStats::empty();
     println!("TX loop for ring {:?}", ring_num);
     println!("Tx rings: {:?}", netmap.get_tx_rings());
 
-    scheduler::set_self_affinity(CpuSet::single(ring_num)).expect("setting affinity failed");
+    scheduler::set_self_affinity(CpuSet::single(cpu)).expect("setting affinity failed");
     scheduler::set_self_policy(Policy::Fifo, 20).expect("setting sched policy failed");
 
     /* wait for card to reinitialize */
@@ -155,14 +155,14 @@ fn host_rx_loop(ring_num: usize, netmap: &mut NetmapDescriptor) {
         }
 }
 
-fn rx_loop(ring_num: usize, chan: mpsc::SyncSender<IngressPacket>,
+fn rx_loop(ring_num: u16, cpu: usize, chan: mpsc::SyncSender<IngressPacket>,
         netmap: &mut NetmapDescriptor) {
         let mut stats = RxStats::empty();
 
         println!("RX loop for ring {:?}", ring_num);
         println!("Rx rings: {:?}", netmap.get_rx_rings());
 
-        scheduler::set_self_affinity(CpuSet::single(ring_num)).expect("setting affinity failed");
+        scheduler::set_self_affinity(CpuSet::single(cpu)).expect("setting affinity failed");
         scheduler::set_self_policy(Policy::Fifo, 20).expect("setting sched policy failed");
 
         thread::sleep_ms(1000);
@@ -246,7 +246,8 @@ fn run(rx_iface: &str, tx_iface: &str) {
                     let nm = rx_nm.lock().unwrap();
                     nm.clone_ring(ring, Direction::Input).unwrap()
                 };
-                rx_loop(ring as usize, tx, &mut ring_nm)
+                let cpu = ring as usize;
+                rx_loop(ring, cpu, tx, &mut ring_nm)
             });
 
             let tx_nm = tx_nm.clone();
@@ -256,7 +257,8 @@ fn run(rx_iface: &str, tx_iface: &str) {
                     let nm = tx_nm.lock().unwrap();
                     nm.clone_ring(ring, Direction::Output).unwrap()
                 };
-                tx_loop(ring as usize, rx, &mut ring_nm)
+                let cpu = ring as usize;
+                tx_loop(ring, cpu, rx, &mut ring_nm)
             });
         }
 
