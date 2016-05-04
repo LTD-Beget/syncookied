@@ -257,7 +257,7 @@ fn run(rx_iface: &str, tx_iface: &str) {
                     let nm = tx_nm.lock().unwrap();
                     nm.clone_ring(ring, Direction::Output).unwrap()
                 };
-                let cpu = ring as usize;
+                let cpu = rx_count as usize + ring as usize; /* HACK */
                 tx_loop(ring, cpu, rx, &mut ring_nm)
             });
         }
