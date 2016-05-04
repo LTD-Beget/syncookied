@@ -120,11 +120,16 @@ fn tx_loop(ring_num: u16, cpu: usize, chan: mpsc::Receiver<OutgoingPacket>,
                                         break;
                                     }
                                 },
-                            OutgoingPacket::Forwarded((mut buf, len)) => {
-                                let mut eth = MutableEthernetPacket::new(&mut buf[0..len]).unwrap();
-                                eth.set_destination(MacAddr::new(0x90, 0xe2, 0xba, 0xb8, 0x56, 0x89));
+                            OutgoingPacket::Forwarded((mut tmp_buf, len)) => {
+                                {
+                                    let mut eth = MutableEthernetPacket::new(&mut tmp_buf[0..len]).unwrap();
+                                    eth.set_destination(MacAddr::new(0x90, 0xe2, 0xba, 0xb8, 0x56, 0x89));
+                                }
                                 slot.set_flags(netmap::NS_BUF_CHANGED as u16 | netmap::NS_REPORT as u16);
                                 slot.set_len(len as u16);
+                                unsafe {
+                                    ptr::copy_nonoverlapping(tmp_buf.as_ptr(), buf.as_mut_ptr(), len);
+                                };
                                 stats.sent += 1;
                             }
                         };
