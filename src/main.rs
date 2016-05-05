@@ -266,7 +266,7 @@ fn run(rx_iface: &str, tx_iface: &str) {
 
         for ring in 0..rx_count {
             let ring = ring;
-            let (tx, rx) = mpsc::sync_channel(1024);
+            let (tx, rx) = mpsc::sync_channel(0);
 
             let rx_nm = rx_nm.clone();
             scope.spawn(move || {
