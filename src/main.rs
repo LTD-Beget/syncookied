@@ -134,6 +134,7 @@ fn tx_loop(ring_num: u16, cpu: usize, chan: mpsc::Receiver<OutgoingPacket>,
                                 stats.sent += 1;
                             }
                         };
+                        break; // TEST 
                         if rate <= 1000 {
                             break; // do tx sync on every packet if we receive
                             // small amount of packets
