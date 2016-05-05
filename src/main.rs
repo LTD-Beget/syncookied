@@ -112,7 +112,7 @@ fn tx_loop(ring_num: u16, cpu: usize, chan: mpsc::Receiver<OutgoingPacket>,
                             OutgoingPacket::Ingress(pkt) => {
                                      if let Some(len) = packet::handle_reply(pkt, buf) {
                                         //println!("[TX#{}] SENDING PACKET\n", ring_num);
-                                        slot.set_flags(netmap::NS_BUF_CHANGED as u16 | netmap::NS_REPORT as u16);
+                                        slot.set_flags(netmap::NS_BUF_CHANGED as u16 /* | netmap::NS_REPORT as u16 */);
                                         slot.set_len(len as u16);
                                         stats.sent += 1;
                                     } else {
@@ -126,7 +126,7 @@ fn tx_loop(ring_num: u16, cpu: usize, chan: mpsc::Receiver<OutgoingPacket>,
                                     eth.set_destination(MacAddr::new(0x90, 0xe2, 0xba, 0xb8, 0x56, 0x89));
                                     eth.set_source(MacAddr::new(0x90, 0xe2, 0xba, 0xb8, 0x56, 0x88));
                                 }
-                                slot.set_flags(netmap::NS_BUF_CHANGED as u16 | netmap::NS_REPORT as u16);
+                                slot.set_flags(netmap::NS_BUF_CHANGED as u16/* | netmap::NS_REPORT as u16 */);
                                 slot.set_len(len as u16);
                                 unsafe {
                                     ptr::copy_nonoverlapping(tmp_buf.as_ptr(), buf.as_mut_ptr(), len);
