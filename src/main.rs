@@ -290,6 +290,7 @@ fn run(rx_iface: &str, tx_iface: &str) {
             });
         }
 
+        /*
         {
             let nm = rx_nm.clone();
             let ring = rx_count;
@@ -304,6 +305,7 @@ fn run(rx_iface: &str, tx_iface: &str) {
             });
 
         }
+        */
     });
 }
 

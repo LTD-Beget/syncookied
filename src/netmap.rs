@@ -313,7 +313,7 @@ unsafe impl Send for NetmapDescriptor {}
 impl NetmapDescriptor {
     pub fn new(iface: &str) -> Result<Self, NetmapError> {
         let base_nmd: netmap::nmreq = unsafe { mem::zeroed() };
-        let netmap_iface = CString::new(format!("netmap:{}*", iface)).unwrap();
+        let netmap_iface = CString::new(format!("netmap:{}", iface)).unwrap();
 
         let netmap_desc = unsafe { netmap_user::nm_open(netmap_iface.as_ptr(), &base_nmd, 0, ptr::null()) };
         if netmap_desc == ptr::null_mut() {
