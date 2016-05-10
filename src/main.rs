@@ -9,7 +9,9 @@ use std::ptr;
 use std::process;
 use std::thread;
 use std::time;
+use std::mem;
 use std::sync::mpsc;
+use std::sync::{Arc,Mutex,Condvar};
 
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
@@ -33,7 +35,7 @@ mod sha1;
 mod packet;
 mod csum;
 use packet::{Action,IngressPacket};
-use netmap::{Direction,NetmapDescriptor,NetmapRing,NetmapSlot};
+use netmap::{Direction,NetmapDescriptor,NetmapRing,NetmapSlot,TxSlot,RxSlot};
 
 pub static TCP_TIME_STAMP: AtomicUsize = ATOMIC_USIZE_INIT;
 pub static TCP_COOKIE_TIME: AtomicUsize = ATOMIC_USIZE_INIT;
@@ -75,7 +77,7 @@ impl TxStats {
 
 enum OutgoingPacket {
     Ingress(IngressPacket),
-    Forwarded(([u8;2048], usize))
+    Forwarded((usize, usize)),
 }
 
 // helpers
@@ -86,7 +88,7 @@ fn get_cpu_count() -> usize {
 }
 
 fn tx_loop(ring_num: u16, cpu: usize, chan: mpsc::Receiver<OutgoingPacket>,
-            netmap: &mut NetmapDescriptor) {
+            netmap: &mut NetmapDescriptor, lock: Arc<(Mutex<u32>, Condvar)>) {
     let mut stats = TxStats::empty();
     println!("TX loop for ring {:?}", ring_num);
     println!("Tx rings: {:?}", netmap.get_tx_rings());
@@ -120,21 +122,42 @@ fn tx_loop(ring_num: u16, cpu: usize, chan: mpsc::Receiver<OutgoingPacket>,
                                         break;
                                     }
                                 },
-                            OutgoingPacket::Forwarded((mut tmp_buf, len)) => {
+                            OutgoingPacket::Forwarded((slot_ptr, buf_ptr)) => {
+                                use std::slice;
+                                /* swap buffers (zero copy) */
+                                let rx_slot: &mut TxSlot = unsafe { mem::transmute(slot_ptr as *mut TxSlot) };
+                                let tx_idx = slot.get_buf_idx();
+                                let tx_len = slot.get_len();
+
+                                slot.set_buf_idx(rx_slot.get_buf_idx());
+                                slot.set_len(rx_slot.get_len());
+                                slot.set_flags(netmap::NS_BUF_CHANGED);
+
+                                rx_slot.set_buf_idx(tx_idx);
+                                rx_slot.set_len(tx_len);
+                                rx_slot.set_flags(netmap::NS_BUF_CHANGED as u16);
+
                                 {
-                                    let mut eth = MutableEthernetPacket::new(&mut tmp_buf[0..len]).unwrap();
+                                    let &(ref lock, ref cvar) = &*lock;
+                                    let mut to_forward = lock.lock().unwrap();
+                                    *to_forward -= 1;
+                                    if *to_forward == 0 {
+                                        println!("[TX#{}]: forwarding done", ring_num);
+                                        cvar.notify_one();
+                                    }
+                                }
+
+                                let mut buf = unsafe { slice::from_raw_parts_mut::<u8>(buf_ptr as *mut u8, slot.get_len() as usize) };
+
+                                {
+                                    let mut eth = MutableEthernetPacket::new(&mut buf[0..]).unwrap();
                                     eth.set_destination(MacAddr::new(0x90, 0xe2, 0xba, 0xb8, 0x56, 0x89));
                                     eth.set_source(MacAddr::new(0x90, 0xe2, 0xba, 0xb8, 0x56, 0x88));
                                 }
-                                slot.set_flags(netmap::NS_BUF_CHANGED as u16/* | netmap::NS_REPORT as u16 */);
-                                slot.set_len(len as u16);
-                                unsafe {
-                                    ptr::copy_nonoverlapping(tmp_buf.as_ptr(), buf.as_mut_ptr(), len);
-                                };
                                 stats.sent += 1;
                             }
                         };
-                        break; // TEST 
+                        //break; // TEST 
                         if rate <= 1000 {
                             break; // do tx sync on every packet if we receive
                             // small amount of packets
@@ -179,7 +202,7 @@ fn host_rx_loop(ring_num: usize, netmap: &mut NetmapDescriptor) {
 }
 
 fn rx_loop(ring_num: u16, cpu: usize, chan: mpsc::SyncSender<OutgoingPacket>,
-        netmap: &mut NetmapDescriptor) {
+        netmap: &mut NetmapDescriptor, lock: Arc<(Mutex<u32>, Condvar)>) {
         let mut stats = RxStats::empty();
 
         println!("RX loop for ring {:?}", ring_num);
@@ -205,15 +228,22 @@ fn rx_loop(ring_num: u16, cpu: usize, chan: mpsc::SyncSender<OutgoingPacket>,
                                 stats.dropped += 1;
                             },
                             Action::Forward => {
-                                stats.forwarded += 1;
                                 //slot.set_flags(netmap::NS_FORWARD as u16);
                                 //fw = true;
+                                /*
                                 let mut tmp = [0;2048];
                                 let len = buf.len();
                                 unsafe {
                                     ptr::copy_nonoverlapping(buf.as_ptr(), tmp.as_mut_ptr(), len);
                                 };
-                                chan.send(OutgoingPacket::Forwarded((tmp, len)));
+                                */
+                                let &(ref lock, ref cvar) = &*lock;
+                                let mut to_forward = lock.lock().unwrap();
+                                *to_forward += 1;
+                                let slot_ptr: usize = slot as *mut RxSlot as usize;
+                                let buf_ptr: usize = buf.as_ptr() as usize;
+                                chan.send(OutgoingPacket::Forwarded((slot_ptr, buf_ptr)));
+                                stats.forwarded += 1;
                             },
                             Action::Reply(packet) => {
                                 stats.queued += 1;
@@ -224,6 +254,14 @@ fn rx_loop(ring_num: u16, cpu: usize, chan: mpsc::SyncSender<OutgoingPacket>,
                     /*if fw {
                         ring.set_flags(netmap::NR_FORWARD as u32);
                     }*/
+                }
+                {
+                    let &(ref lock, ref cvar) = &*lock;
+                    let mut to_forward = lock.lock().unwrap();
+                    while *to_forward != 0 {
+                        println!("[RX#{}]: waiting for forwarding to happen, {} left", ring_num, *to_forward);
+                        to_forward = cvar.wait(to_forward).unwrap();
+                    }
                 }
             }
             if before.elapsed() >= ival {
@@ -266,9 +304,12 @@ fn run(rx_iface: &str, tx_iface: &str) {
 
         for ring in 0..rx_count {
             let ring = ring;
-            let (tx, rx) = mpsc::sync_channel(0);
+            let (tx, rx) = mpsc::sync_channel(1024 * 1024);
+            let pair = Arc::new((Mutex::new(0), Condvar::new()));
+            let rx_pair = pair.clone();
 
             let rx_nm = rx_nm.clone();
+
             scope.spawn(move || {
                 println!("Starting RX thread for ring {} at {}", ring, rx_iface);
                 let mut ring_nm = {
@@ -276,7 +317,7 @@ fn run(rx_iface: &str, tx_iface: &str) {
                     nm.clone_ring(ring, Direction::Input).unwrap()
                 };
                 let cpu = ring as usize;
-                rx_loop(ring, cpu, tx, &mut ring_nm)
+                rx_loop(ring, cpu, tx, &mut ring_nm, rx_pair)
             });
 
             let tx_nm = tx_nm.clone();
@@ -287,7 +328,7 @@ fn run(rx_iface: &str, tx_iface: &str) {
                     nm.clone_ring(ring, Direction::Output).unwrap()
                 };
                 let cpu = rx_count as usize + ring as usize; /* HACK */
-                tx_loop(ring, cpu, rx, &mut ring_nm)
+                tx_loop(ring, cpu, rx, &mut ring_nm, pair)
             });
         }
 

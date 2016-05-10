@@ -44,6 +44,8 @@ pub trait NetmapSlot {
     fn get_len(&self) -> u16;
     fn get_flags(&self) -> u16;
     fn set_flags(&mut self, flag: u16);
+    fn get_buf_idx(&self) -> u32;
+    fn set_buf_idx(&mut self, idx: u32);
 }
 
 pub struct RxSlot(netmap::netmap_slot);
@@ -59,6 +61,14 @@ impl NetmapSlot for RxSlot {
 
     fn get_flags(&self) -> u16 {
         self.0.flags
+    }
+
+    fn get_buf_idx(&self) -> u32 {
+        self.0.buf_idx
+    }
+
+    fn set_buf_idx(&mut self, idx: u32) {
+        self.0.buf_idx = idx
     }
 }
 
@@ -87,6 +97,16 @@ impl NetmapSlot for TxSlot {
     #[inline]
     fn get_flags(&self) -> u16 {
         self.0.flags
+    }
+
+    #[inline]
+    fn get_buf_idx(&self) -> u32 {
+        self.0.buf_idx
+    }
+
+    #[inline]
+    fn set_buf_idx(&mut self, idx: u32) {
+        self.0.buf_idx = idx
     }
 }
 
