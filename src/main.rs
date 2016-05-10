@@ -142,7 +142,7 @@ fn tx_loop(ring_num: u16, cpu: usize, chan: mpsc::Receiver<OutgoingPacket>,
                                     let mut to_forward = lock.lock().unwrap();
                                     *to_forward -= 1;
                                     if *to_forward == 0 {
-                                        println!("[TX#{}]: forwarding done", ring_num);
+                                        //println!("[TX#{}]: forwarding done", ring_num);
                                         cvar.notify_one();
                                     }
                                 }
@@ -259,7 +259,7 @@ fn rx_loop(ring_num: u16, cpu: usize, chan: mpsc::SyncSender<OutgoingPacket>,
                     let &(ref lock, ref cvar) = &*lock;
                     let mut to_forward = lock.lock().unwrap();
                     while *to_forward != 0 {
-                        println!("[RX#{}]: waiting for forwarding to happen, {} left", ring_num, *to_forward);
+                        //println!("[RX#{}]: waiting for forwarding to happen, {} left", ring_num, *to_forward);
                         to_forward = cvar.wait(to_forward).unwrap();
                     }
                 }
