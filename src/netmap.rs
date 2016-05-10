@@ -307,13 +307,11 @@ impl<'a> Iterator for TxSlotIter<'a> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        use std::sync::atomic::{fence,Ordering};
         //unsafe { libc::ioctl(self.fd, netmap::NIOCTXSYNC as u64, 0 as u64) };
 
         if self.ring.is_empty() {
             return None;
         }
-        fence(Ordering::SeqCst);
         let cur = self.ring.0.cur;
         let slots = self.ring.0.slot.as_mut_ptr();
         let slot: &mut TxSlot = unsafe { mem::transmute(slots.offset(cur as isize)) };
