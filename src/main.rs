@@ -88,6 +88,56 @@ fn get_cpu_count() -> usize {
     }
 }
 
+#[inline]
+fn send(pkt: OutgoingPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxStats, lock: Arc<(Mutex<u32>, Condvar)>) {
+    match pkt {
+        OutgoingPacket::Ingress(pkt) => {
+            if let Some(len) = packet::handle_reply(pkt, buf) {
+                //println!("[TX#{}] SENDING PACKET\n", ring_num);
+                slot.set_flags(netmap::NS_BUF_CHANGED as u16 /* | netmap::NS_REPORT as u16 */);
+                slot.set_len(len as u16);
+                stats.sent += 1;
+            } else {
+                stats.failed += 1;
+            }
+        },
+        OutgoingPacket::Forwarded((slot_ptr, buf_ptr)) => {
+            use std::slice;
+            /* swap buffers (zero copy) */
+            let rx_slot: &mut TxSlot = unsafe { mem::transmute(slot_ptr as *mut TxSlot) };
+            let tx_idx = slot.get_buf_idx();
+            let tx_len = slot.get_len();
+
+            slot.set_buf_idx(rx_slot.get_buf_idx());
+            slot.set_len(rx_slot.get_len());
+            slot.set_flags(netmap::NS_BUF_CHANGED);
+
+            rx_slot.set_buf_idx(tx_idx);
+            rx_slot.set_len(tx_len);
+            rx_slot.set_flags(netmap::NS_BUF_CHANGED as u16);
+
+            {
+                let &(ref lock, ref cvar) = &*lock;
+                let mut to_forward = lock.lock().unwrap();
+                *to_forward -= 1;
+                if *to_forward == 0 {
+                    //println!("[TX#{}]: forwarding done", ring_num);
+                    cvar.notify_one();
+                }
+            }
+
+            let mut buf = unsafe { slice::from_raw_parts_mut::<u8>(buf_ptr as *mut u8, slot.get_len() as usize) };
+
+            {
+                let mut eth = MutableEthernetPacket::new(&mut buf[0..]).unwrap();
+                eth.set_destination(MacAddr::new(0x90, 0xe2, 0xba, 0xb8, 0x56, 0x89));
+                eth.set_source(MacAddr::new(0x90, 0xe2, 0xba, 0xb8, 0x56, 0x88));
+            }
+            stats.sent += 1;
+        }
+    };
+}
+
 fn tx_loop(ring_num: u16, cpu: usize, chan: mpsc::Receiver<OutgoingPacket>,
             netmap: &mut NetmapDescriptor, lock: Arc<(Mutex<u32>, Condvar)>) {
     let mut stats = TxStats::empty();
@@ -115,55 +165,8 @@ fn tx_loop(ring_num: u16, cpu: usize, chan: mpsc::Receiver<OutgoingPacket>,
                         if buf.len() < packet::MIN_REPLY_BUF_LEN {
                             continue;
                         }
-                        let mut pkt = chan.recv().expect("Expected RX not to die on us");
-                        match pkt {
-                            OutgoingPacket::Ingress(pkt) => {
-                                     if let Some(len) = packet::handle_reply(pkt, buf) {
-                                        //println!("[TX#{}] SENDING PACKET\n", ring_num);
-                                        slot.set_flags(netmap::NS_BUF_CHANGED as u16 /* | netmap::NS_REPORT as u16 */);
-                                        slot.set_len(len as u16);
-                                        stats.sent += 1;
-                                    } else {
-                                        stats.failed += 1;
-                                        break;
-                                    }
-                                },
-                            OutgoingPacket::Forwarded((slot_ptr, buf_ptr)) => {
-                                use std::slice;
-                                /* swap buffers (zero copy) */
-                                let rx_slot: &mut TxSlot = unsafe { mem::transmute(slot_ptr as *mut TxSlot) };
-                                let tx_idx = slot.get_buf_idx();
-                                let tx_len = slot.get_len();
-
-                                slot.set_buf_idx(rx_slot.get_buf_idx());
-                                slot.set_len(rx_slot.get_len());
-                                slot.set_flags(netmap::NS_BUF_CHANGED);
-
-                                rx_slot.set_buf_idx(tx_idx);
-                                rx_slot.set_len(tx_len);
-                                rx_slot.set_flags(netmap::NS_BUF_CHANGED as u16);
-
-                                {
-                                    let &(ref lock, ref cvar) = &*lock;
-                                    let mut to_forward = lock.lock().unwrap();
-                                    *to_forward -= 1;
-                                    if *to_forward == 0 {
-                                        //println!("[TX#{}]: forwarding done", ring_num);
-                                        cvar.notify_one();
-                                    }
-                                }
-
-                                let mut buf = unsafe { slice::from_raw_parts_mut::<u8>(buf_ptr as *mut u8, slot.get_len() as usize) };
-
-                                {
-                                    let mut eth = MutableEthernetPacket::new(&mut buf[0..]).unwrap();
-                                    eth.set_destination(MacAddr::new(0x90, 0xe2, 0xba, 0xb8, 0x56, 0x89));
-                                    eth.set_source(MacAddr::new(0x90, 0xe2, 0xba, 0xb8, 0x56, 0x88));
-                                }
-                                stats.sent += 1;
-                            }
-                        };
-                        //break; // TEST 
+                        let pkt = chan.recv().expect("Expected RX not to die on us");
+                        send(pkt, slot, buf, &mut stats, lock.clone());
                         if rate <= 1000 {
                             break; // do tx sync on every packet if we receive
                             // small amount of packets
