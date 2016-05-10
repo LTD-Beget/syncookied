@@ -34,6 +34,7 @@ mod cookie;
 mod sha1;
 mod packet;
 mod csum;
+mod util;
 use packet::{Action,IngressPacket};
 use netmap::{Direction,NetmapDescriptor,NetmapRing,NetmapSlot,TxSlot,RxSlot};
 
@@ -92,6 +93,8 @@ fn tx_loop(ring_num: u16, cpu: usize, chan: mpsc::Receiver<OutgoingPacket>,
     let mut stats = TxStats::empty();
     println!("TX loop for ring {:?}", ring_num);
     println!("Tx rings: {:?}", netmap.get_tx_rings());
+
+    util::set_thread_name(&format!("tx#{}", ring_num));
 
     scheduler::set_self_affinity(CpuSet::single(cpu)).expect("setting affinity failed");
     scheduler::set_self_policy(Policy::Fifo, 20).expect("setting sched policy failed");
@@ -207,6 +210,8 @@ fn rx_loop(ring_num: u16, cpu: usize, chan: mpsc::SyncSender<OutgoingPacket>,
 
         println!("RX loop for ring {:?}", ring_num);
         println!("Rx rings: {:?}", netmap.get_rx_rings());
+
+        util::set_thread_name(&format!("rx#{}", ring_num));
 
         scheduler::set_self_affinity(CpuSet::single(cpu)).expect("setting affinity failed");
         scheduler::set_self_policy(Policy::Fifo, 20).expect("setting sched policy failed");
