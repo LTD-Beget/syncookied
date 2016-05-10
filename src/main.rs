@@ -112,6 +112,9 @@ fn tx_loop(ring_num: u16, cpu: usize, chan: mpsc::Receiver<OutgoingPacket>,
         if let Some(_) = netmap.poll(netmap::Direction::Output) {
             for ring in netmap.tx_iter() {
                     for (slot, buf) in ring.iter(fd) {
+                        if buf.len() < packet::MIN_REPLY_BUF_LEN {
+                            continue;
+                        }
                         let mut pkt = chan.recv().expect("Expected RX not to die on us");
                         match pkt {
                             OutgoingPacket::Ingress(pkt) => {

@@ -13,6 +13,8 @@ use pnet::util::MacAddr;
 use ::cookie;
 use ::csum;
 
+pub const MIN_REPLY_BUF_LEN: usize = 78;
+
 #[allow(dead_code)]
 #[derive(Debug)]
 pub enum Action {
