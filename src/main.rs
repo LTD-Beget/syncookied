@@ -11,6 +11,7 @@ use std::thread;
 use std::time;
 use std::mem;
 use std::sync::mpsc;
+use std::sync::mpsc::TryRecvError;
 use std::sync::{Arc,Mutex,Condvar};
 
 use std::net::IpAddr;
@@ -159,25 +160,40 @@ fn tx_loop(ring_num: u16, cpu: usize, chan: mpsc::Receiver<OutgoingPacket>,
 
     loop {
         let fd = netmap.get_fd();
+        /* block and wait for packet in queue */
+        let pkt = chan.recv().expect("Expected RX not to die on us");
         if let Some(_) = netmap.poll(netmap::Direction::Output) {
-            for ring in netmap.tx_iter() {
-                    for (slot, buf) in ring.iter(fd) {
-                        if buf.len() < packet::MIN_REPLY_BUF_LEN {
-                            continue;
-                        }
-                        let pkt = chan.recv().expect("Expected RX not to die on us");
-                        send(pkt, slot, buf, &mut stats, lock.clone());
-                        if rate <= 1000 {
-                            break; // do tx sync on every packet if we receive
-                            // small amount of packets
-                        } else if rate <= 10000 && stats.sent % 64 == 0 {
-                            break;
-                        } else if rate <= 100_000 && stats.sent % 128 == 0 {
-                            break;
-                        } else if /* rate <= 1000_000 && */ stats.sent % 1024 == 0 {
-                            break;
-                        }
+            if let Some(ring) = netmap.tx_iter().next() {
+                let mut tx_iter = ring.iter(fd);
+
+                /* send one packet */
+                if let Some((slot, buf)) = tx_iter.next() {
+                    if buf.len() < packet::MIN_REPLY_BUF_LEN {
+                        continue;
                     }
+                    send(pkt, slot, buf, &mut stats, lock.clone());
+                }
+                /* try to send more if we have any (non-blocking) */
+                for (slot, buf) in tx_iter {
+                    if buf.len() < packet::MIN_REPLY_BUF_LEN {
+                        continue;
+                    }
+                    match chan.try_recv() {
+                        Ok(pkt) => send(pkt, slot, buf, &mut stats, lock.clone()),
+                        Err(TryRecvError::Empty) => break,
+                        Err(TryRecvError::Disconnected) => panic!("Expected RX not to die on us"),
+                    }
+                    if rate <= 1000 {
+                        break; // do tx sync on every packet if we receive
+                        // small amount of packets
+                    } else if rate <= 10000 && stats.sent % 64 == 0 {
+                        break;
+                    } else if rate <= 100_000 && stats.sent % 128 == 0 {
+                        break;
+                    } else if /* rate <= 1000_000 && */ stats.sent % 1024 == 0 {
+                        break;
+                    }
+                }
             }
         }
         if before.elapsed() >= ival {
