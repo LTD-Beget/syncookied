@@ -25,7 +25,8 @@ pub use self::netmap_sys::netmap::NR_FORWARD;
 #[derive(Debug)]
 pub enum Direction {
     Input,
-    Output
+    Output,
+    Both
 }
 
 #[derive(Debug)]
@@ -351,8 +352,9 @@ impl NetmapDescriptor {
 
         /* XXX: check that we opened it with ALL_NIC before */
         let (flag, ring_flag) = match dir {
-            Direction::Input => (0x2000 /* NR_RX_RINGS_ONLY */, 0 /* netmap::NETMAP_NO_TX_POLL */),
+            Direction::Input => (0x2000 /* NR_RX_RINGS_ONLY */, netmap::NETMAP_NO_TX_POLL),
             Direction::Output => (0x4000 /* NR_TX_RINGS_ONLY */, 0),
+            Direction::Both => (0, 0),
         };
         nm_desc_raw.req.nr_flags = netmap::NR_REG_ONE_NIC as u32 | flag as u32;
         if ring == self.get_rx_rings_count() { nm_desc_raw.req.nr_flags = netmap::NR_REG_SW as u32 | flag };
@@ -443,6 +445,7 @@ impl NetmapDescriptor {
         pollfd.events = match dir {
             Direction::Input => libc::POLLIN,
             Direction::Output => libc::POLLOUT,
+            Direction::Both => libc::POLLIN | libc::POLLOUT,
         };
 
         let rv = unsafe { libc::poll(&mut pollfd, 1, 1000) };
