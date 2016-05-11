@@ -265,6 +265,7 @@ fn rx_loop(ring_num: u16, cpu: usize, chan: mpsc::SyncSender<OutgoingPacket>,
                                 let buf_ptr: usize = buf.as_ptr() as usize;
                                 chan.send(OutgoingPacket::Forwarded((slot_ptr, buf_ptr)));
                                 stats.forwarded += 1;
+                                fw = true;
                             },
                             Action::Reply(packet) => {
                                 stats.queued += 1;
@@ -275,13 +276,13 @@ fn rx_loop(ring_num: u16, cpu: usize, chan: mpsc::SyncSender<OutgoingPacket>,
                     /*if fw {
                         ring.set_flags(netmap::NR_FORWARD as u32);
                     }*/
-                }
-                {
-                    let &(ref lock, ref cvar) = &*lock;
-                    let mut to_forward = lock.lock().unwrap();
-                    while *to_forward != 0 {
-                        println!("[RX#{}]: waiting for forwarding to happen, {} left", ring_num, *to_forward);
-                        to_forward = cvar.wait(to_forward).unwrap();
+                    if fw {
+                        let &(ref lock, ref cvar) = &*lock;
+                        let mut to_forward = lock.lock().unwrap();
+                        while *to_forward != 0 {
+                            println!("[RX#{}]: waiting for forwarding to happen, {} left", ring_num, *to_forward);
+                            to_forward = cvar.wait(to_forward).unwrap();
+                        }
                     }
                 }
             }
