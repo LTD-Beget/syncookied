@@ -12,7 +12,7 @@ use std::time;
 use std::mem;
 use std::sync::mpsc;
 use std::sync::mpsc::TryRecvError;
-use std::sync::{Arc,Mutex,Condvar};
+use std::sync::{Arc,Mutex};
 
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
@@ -90,7 +90,7 @@ fn get_cpu_count() -> usize {
 }
 
 #[inline]
-fn send(pkt: OutgoingPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxStats, lock: Arc<(Mutex<u32>, Condvar)>, ring_num: u16) {
+fn send(pkt: OutgoingPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxStats, lock: Arc<AtomicUsize>, ring_num: u16) {
     match pkt {
         OutgoingPacket::Ingress(pkt) => {
             if let Some(len) = packet::handle_reply(pkt, buf) {
@@ -118,15 +118,11 @@ fn send(pkt: OutgoingPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxSt
             rx_slot.set_flags(netmap::NS_BUF_CHANGED as u16);
 
             {
-                let &(ref lock, ref cvar) = &*lock;
-                let mut to_forward = lock.lock().unwrap();
-                *to_forward -= 1;
-
-                if *to_forward > 0 {
-                    println!("[TX#{}]: forwarding, {} left", ring_num, *to_forward);
+                let to_forward = lock;
+                if to_forward.fetch_sub(1, Ordering::SeqCst) == 1 {
+                    println!("[TX#{}]: forwarding done", ring_num);
                 } else {
-                    //println!("[TX#{}]: forwarding done", ring_num);
-                    cvar.notify_one();
+                    println!("[TX#{}]: forwarding, {} left", ring_num, to_forward.load(Ordering::SeqCst));
                 }
             }
 
@@ -143,7 +139,7 @@ fn send(pkt: OutgoingPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxSt
 }
 
 fn tx_loop(ring_num: u16, cpu: usize, chan: mpsc::Receiver<OutgoingPacket>,
-            netmap: &mut NetmapDescriptor, lock: Arc<(Mutex<u32>, Condvar)>) {
+            netmap: &mut NetmapDescriptor, lock: Arc<AtomicUsize>) {
     let mut stats = TxStats::empty();
     println!("TX loop for ring {:?}", ring_num);
     println!("Tx rings: {:?}", netmap.get_tx_rings());
@@ -230,7 +226,7 @@ fn host_rx_loop(ring_num: usize, netmap: &mut NetmapDescriptor) {
 }
 
 fn rx_loop(ring_num: u16, cpu: usize, chan: mpsc::SyncSender<OutgoingPacket>,
-        netmap: &mut NetmapDescriptor, lock: Arc<(Mutex<u32>, Condvar)>) {
+        netmap: &mut NetmapDescriptor, lock: Arc<AtomicUsize>) {
         let mut stats = RxStats::empty();
 
         println!("RX loop for ring {:?}", ring_num);
@@ -258,11 +254,12 @@ fn rx_loop(ring_num: u16, cpu: usize, chan: mpsc::SyncSender<OutgoingPacket>,
                                 stats.dropped += 1;
                             },
                             Action::Forward => {
-                                let &(ref lock, ref cvar) = &*lock;
-                                let mut to_forward = lock.lock().unwrap();
-                                *to_forward += 1;
+                                let to_forward = &lock;
+
                                 let slot_ptr: usize = slot as *mut RxSlot as usize;
                                 let buf_ptr: usize = buf.as_ptr() as usize;
+
+                                to_forward.fetch_add(1, Ordering::SeqCst);
                                 chan.send(OutgoingPacket::Forwarded((slot_ptr, buf_ptr)));
                                 stats.forwarded += 1;
                                 fw = true;
@@ -277,11 +274,10 @@ fn rx_loop(ring_num: u16, cpu: usize, chan: mpsc::SyncSender<OutgoingPacket>,
                         ring.set_flags(netmap::NR_FORWARD as u32);
                     }*/
                     if fw {
-                        let &(ref lock, ref cvar) = &*lock;
-                        let mut to_forward = lock.lock().unwrap();
-                        while *to_forward != 0 {
-                            println!("[RX#{}]: waiting for forwarding to happen, {} left", ring_num, *to_forward);
-                            to_forward = cvar.wait(to_forward).unwrap();
+                        let to_forward = &lock;
+                        while to_forward.load(Ordering::SeqCst) != 0 {
+                            unsafe { libc::sched_yield() };
+                            println!("[RX#{}]: waiting for forwarding to happen, {} left", ring_num, to_forward.load(Ordering::SeqCst));
                         }
                     }
                 }
@@ -327,7 +323,7 @@ fn run(rx_iface: &str, tx_iface: &str) {
         for ring in 0..rx_count {
             let ring = ring;
             let (tx, rx) = mpsc::sync_channel(1024 * 1024);
-            let pair = Arc::new((Mutex::new(0), Condvar::new()));
+            let pair = Arc::new(AtomicUsize::new(0));
             let rx_pair = pair.clone();
 
             let rx_nm = rx_nm.clone();
