@@ -90,7 +90,7 @@ fn get_cpu_count() -> usize {
 }
 
 #[inline]
-fn send(pkt: OutgoingPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxStats, lock: Arc<(Mutex<u32>, Condvar)>) {
+fn send(pkt: OutgoingPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxStats, lock: Arc<(Mutex<u32>, Condvar)>, ring_num: u16) {
     match pkt {
         OutgoingPacket::Ingress(pkt) => {
             if let Some(len) = packet::handle_reply(pkt, buf) {
@@ -121,7 +121,10 @@ fn send(pkt: OutgoingPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxSt
                 let &(ref lock, ref cvar) = &*lock;
                 let mut to_forward = lock.lock().unwrap();
                 *to_forward -= 1;
-                if *to_forward == 0 {
+
+                if *to_forward > 0 {
+                    println!("[TX#{}]: forwarding, {} left", ring_num, *to_forward);
+                } else {
                     //println!("[TX#{}]: forwarding done", ring_num);
                     cvar.notify_one();
                 }
@@ -171,7 +174,7 @@ fn tx_loop(ring_num: u16, cpu: usize, chan: mpsc::Receiver<OutgoingPacket>,
                     if buf.len() < packet::MIN_REPLY_BUF_LEN {
                         continue;
                     }
-                    send(pkt, slot, buf, &mut stats, lock.clone());
+                    send(pkt, slot, buf, &mut stats, lock.clone(), ring_num);
                 }
                 /* try to send more if we have any (non-blocking) */
                 for (slot, buf) in tx_iter {
@@ -179,7 +182,7 @@ fn tx_loop(ring_num: u16, cpu: usize, chan: mpsc::Receiver<OutgoingPacket>,
                         continue;
                     }
                     match chan.try_recv() {
-                        Ok(pkt) => send(pkt, slot, buf, &mut stats, lock.clone()),
+                        Ok(pkt) => send(pkt, slot, buf, &mut stats, lock.clone(), ring_num),
                         Err(TryRecvError::Empty) => break,
                         Err(TryRecvError::Disconnected) => panic!("Expected RX not to die on us"),
                     }
@@ -255,15 +258,6 @@ fn rx_loop(ring_num: u16, cpu: usize, chan: mpsc::SyncSender<OutgoingPacket>,
                                 stats.dropped += 1;
                             },
                             Action::Forward => {
-                                //slot.set_flags(netmap::NS_FORWARD as u16);
-                                //fw = true;
-                                /*
-                                let mut tmp = [0;2048];
-                                let len = buf.len();
-                                unsafe {
-                                    ptr::copy_nonoverlapping(buf.as_ptr(), tmp.as_mut_ptr(), len);
-                                };
-                                */
                                 let &(ref lock, ref cvar) = &*lock;
                                 let mut to_forward = lock.lock().unwrap();
                                 *to_forward += 1;
@@ -286,7 +280,7 @@ fn rx_loop(ring_num: u16, cpu: usize, chan: mpsc::SyncSender<OutgoingPacket>,
                     let &(ref lock, ref cvar) = &*lock;
                     let mut to_forward = lock.lock().unwrap();
                     while *to_forward != 0 {
-                        //println!("[RX#{}]: waiting for forwarding to happen, {} left", ring_num, *to_forward);
+                        println!("[RX#{}]: waiting for forwarding to happen, {} left", ring_num, *to_forward);
                         to_forward = cvar.wait(to_forward).unwrap();
                     }
                 }
