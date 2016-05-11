@@ -5,7 +5,7 @@ use pnet::packet::Packet;
 use pnet::packet::ethernet::{EthernetPacket, MutableEthernetPacket, EtherTypes};
 use pnet::packet::ip::{IpNextHeaderProtocol, IpNextHeaderProtocols};
 use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet, self};
-use pnet::packet::tcp::{TcpPacket, MutableTcpPacket, MutableTcpOptionPacket, TcpOptionNumbers, self};
+use pnet::packet::tcp::{TcpPacket, MutableTcpPacket, MutableTcpOptionPacket, TcpOptionNumbers, TcpFlags, self};
 use pnet::packet::MutablePacket;
 use pnet::packet::PacketSize;
 use pnet::util::MacAddr;
@@ -121,8 +121,7 @@ fn build_reply(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
         tcp.set_sequence(seq_num);
         tcp.set_acknowledgement(pkt.tcp_sequence + 1);
         tcp.set_window(65535);
-        tcp.set_syn(1);
-        tcp.set_ack(1);
+        tcp.set_flags(TcpFlags::SYN | TcpFlags::ACK);
         tcp.set_data_offset(11);
         tcp.set_checksum(0);
         {
@@ -191,7 +190,7 @@ fn handle_tcp_packet(source: IpAddr, destination: IpAddr, packet: &[u8],
     if let Some(tcp) = tcp {
         //println!("TCP Packet: {}:{} > {}:{}; length: {}", source,
         //            tcp.get_source(), destination, tcp.get_destination(), packet.len());
-        if tcp.get_syn() == 1 && tcp.get_ack() == 0 {
+        if tcp.get_flags() & TcpFlags::SYN != 0 && tcp.get_flags() & TcpFlags::ACK == 0 {
             //println!("TCP Packet: {:?}", tcp);
             pkt.tcp_source = tcp.get_source();
             pkt.tcp_destination = tcp.get_destination();

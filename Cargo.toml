@@ -12,14 +12,12 @@ clap = "2.4.0"
 
 [dependencies.netmap_sys]
 git = "https://github.com/libpnet/netmap_sys"
-branch = "master"
+rev = "4bc5496c0afb6dc884a3d8c686a58bff82b323b8"
 features = [ "netmap_with_libs" ]
 
 [dependencies.pnet]
-git = "https://github.com/polachok/libpnet"
-branch = "tcp+slice"
-#branch = "tcp+netmap"
-#features = ["netmap"]
+git = "https://github.com/libpnet/libpnet"
+rev = "bdf864944dbc285db47978965fed6ea2076efc40"
 
 [build-dependencies]
 gcc = "0.3.26"
