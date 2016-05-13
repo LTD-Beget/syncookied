@@ -95,7 +95,7 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, fwd_mac: MacAddr) {
                     nm.clone_ring(ring, Direction::Input).unwrap()
                 };
                 let cpu = ring as usize;
-                rx::Receiver::new(ring, cpu, tx, &mut ring_nm, rx_pair).run();
+                rx::Receiver::new(ring, cpu, tx, &mut ring_nm, rx_pair, rx_mac.clone()).run();
             });
 
             let tx_nm = tx_nm.clone();

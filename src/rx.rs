@@ -41,11 +41,12 @@ pub struct Receiver<'a> {
     netmap: &'a mut NetmapDescriptor,
     lock: Arc<AtomicUsize>,
     stats: RxStats,
+    mac: MacAddr,
 }
 
 impl<'a> Receiver<'a> {
     pub fn new(ring_num: u16, cpu: usize, chan: mpsc::SyncSender<OutgoingPacket>,
-               netmap: &'a mut NetmapDescriptor, lock: Arc<AtomicUsize>) -> Self {
+               netmap: &'a mut NetmapDescriptor, lock: Arc<AtomicUsize>, mac: MacAddr) -> Self {
         Receiver {
             ring_num: ring_num,
             cpu: cpu,
@@ -53,6 +54,7 @@ impl<'a> Receiver<'a> {
             netmap: netmap,
             lock: lock,
             stats: RxStats::empty(),
+            mac: mac,
         }
     }
 
@@ -78,7 +80,7 @@ impl<'a> Receiver<'a> {
                     let mut fw = false;
                     for (slot, buf) in ring.iter() {
                         stats.received += 1;
-                        match packet::handle_input(buf) {
+                        match packet::handle_input(buf, self.mac) {
                             Action::Drop => {
                                 stats.dropped += 1;
                             },

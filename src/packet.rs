@@ -85,10 +85,10 @@ pub fn dump_input(packet_data: &[u8]) {
     };
 }
 
-pub fn handle_input(packet_data: &[u8]) -> Action {
+pub fn handle_input(packet_data: &[u8], mac: MacAddr) -> Action {
     let mut pkt: IngressPacket = Default::default();
     let eth = EthernetPacket::new(packet_data).unwrap();
-    match handle_ether_packet(&eth, &mut pkt) {
+    match handle_ether_packet(&eth, &mut pkt, mac) {
         Action::Reply(_) => Action::Reply(pkt),
         x@_ => x,
     }
@@ -346,10 +346,11 @@ fn handle_ipv4_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket) -> Act
     }
 }
 
-fn handle_ether_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket) -> Action {
+#[inline]
+fn handle_ether_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket, mac: MacAddr) -> Action {
     let mac_dest = ethernet.get_destination();
 
-    if mac_dest != MacAddr::new(0x90, 0xe2, 0xba, 0xb8, 0x56, 0x88) {
+    if mac_dest != mac {
         return Action::Drop;
     }
     match ethernet.get_ethertype() {
