@@ -16,8 +16,9 @@ rev = "4bc5496c0afb6dc884a3d8c686a58bff82b323b8"
 features = [ "netmap_with_libs" ]
 
 [dependencies.pnet]
-git = "https://github.com/libpnet/libpnet"
-rev = "bdf864944dbc285db47978965fed6ea2076efc40"
+git = "https://github.com/polachok/libpnet"
+rev = "0605bb0f1a492842affd9dd799484f1374bfc942"
+branch = "faster+payload"
 
 [build-dependencies]
 gcc = "0.3.26"
