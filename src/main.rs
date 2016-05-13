@@ -440,12 +440,28 @@ fn main() {
                                    .value_name("iface")
                                    .help("Interface to send packets on (input interface will be used if not set)")
                                    .takes_value(true))
+                               .arg(Arg::with_name("in-mac")
+                                    .short("I")
+                                    .required(true)
+                                    .long("input-mac")
+                                    .value_name("macaddr")
+                                    .help("Input interface mac address")
+                                    .takes_value(true))
+                               .arg(Arg::with_name("fwd-mac")
+                                    .short("F")
+                                    .required(true)
+                                    .long("forward-to")
+                                    .value_name("macaddr")
+                                    .help("Mac address we forward to")
+                                    .takes_value(true))
                                .get_matches();
 
     let rx_iface = matches.value_of("in").expect("Expected valid input interface");
     let tx_iface = matches.value_of("out").unwrap_or(rx_iface);
+    let rx_mac = matches.value_of("in-mac").map(util::parse_mac).expect("Expected valid mac").unwrap();
+    let fwd_mac = matches.value_of("fwd-mac").map(util::parse_mac).expect("Expected valid mac").unwrap();
     let ncpus = util::get_cpu_count();
-    println!("interfaces: [Rx: {}, Tx: {}] cores: {}", rx_iface, tx_iface, ncpus);
+    println!("interfaces: [Rx: {}/{}, Tx: {}] Fwd to: {} Cores: {}", rx_iface, rx_mac, tx_iface, fwd_mac, ncpus);
     read_uptime();
     run(&rx_iface, &tx_iface);
 }
