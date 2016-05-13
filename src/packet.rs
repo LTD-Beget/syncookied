@@ -100,7 +100,7 @@ pub fn handle_reply(pkt: IngressPacket, tx_slice: &mut [u8]) -> Option<usize> {
     if len < 78 {
         None
     } else {
-        Some(build_reply_2(&pkt, tx_slice))
+        Some(build_reply_with_template(&pkt, tx_slice))
     }
 }
 
@@ -183,7 +183,7 @@ fn build_reply_fast(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
     len
 }
 
-fn build_reply_2(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
+fn build_reply_with_template(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
     use std::ptr;
     unsafe {
         ptr::copy_nonoverlapping::<u8>(REPLY_TEMPLATE.as_ptr(), reply.as_mut_ptr(), 78);
