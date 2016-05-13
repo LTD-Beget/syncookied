@@ -84,12 +84,14 @@ impl<'a> Sender<'a> {
                     /* send one packet */
                     if let Some((slot, buf)) = tx_iter.next() {
                         let pkt = self.chan.recv().expect("Expected RX not to die on us");
-                        Self::send(pkt, slot, buf, &mut self.stats, self.lock.clone(), self.ring_num);
+                        Self::send(pkt, slot, buf, &mut self.stats, self.lock.clone(),
+                                   self.ring_num, self.source_mac, self.destination_mac);
                     }
                     /* try to send more if we have any (non-blocking) */
                     for (slot, buf) in tx_iter {
                         match self.chan.try_recv() {
-                            Ok(pkt) => Self::send(pkt, slot, buf, &mut self.stats, self.lock.clone(), self.ring_num),
+                            Ok(pkt) => Self::send(pkt, slot, buf, &mut self.stats, self.lock.clone(),
+                                                  self.ring_num, self.source_mac, self.destination_mac),
                             Err(TryRecvError::Empty) => break,
                             Err(TryRecvError::Disconnected) => panic!("Expected RX not to die on us"),
                         }
@@ -116,7 +118,8 @@ impl<'a> Sender<'a> {
     }
 
     #[inline]
-    fn send(pkt: OutgoingPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxStats, lock: Arc<AtomicUsize>, ring_num: u16) {
+    fn send(pkt: OutgoingPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxStats,
+            lock: Arc<AtomicUsize>, ring_num: u16, source_mac: MacAddr, destination_mac: MacAddr) {
         match pkt {
             OutgoingPacket::Ingress(pkt) => {
                 if let Some(len) = packet::handle_reply(pkt, buf) {
@@ -162,8 +165,8 @@ impl<'a> Sender<'a> {
     */
                 {
                     let mut eth = MutableEthernetPacket::new(&mut buf[0..]).unwrap();
-                    eth.set_destination(MacAddr::new(0x90, 0xe2, 0xba, 0xb8, 0x56, 0x89));
-                    eth.set_source(MacAddr::new(0x90, 0xe2, 0xba, 0xb8, 0x56, 0x88));
+                    eth.set_source(source_mac);
+                    eth.set_destination(destination_mac);
                 }
                 stats.sent += 1;
             }
