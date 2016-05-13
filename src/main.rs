@@ -84,13 +84,6 @@ enum OutgoingPacket {
     Forwarded((usize, usize)),
 }
 
-// helpers
-fn get_cpu_count() -> usize {
-    unsafe {
-        libc::sysconf(libc::_SC_NPROCESSORS_ONLN) as usize
-    }
-}
-
 #[inline]
 fn send(pkt: OutgoingPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxStats, lock: Arc<AtomicUsize>, ring_num: u16) {
     match pkt {
@@ -451,7 +444,7 @@ fn main() {
 
     let rx_iface = matches.value_of("in").expect("Expected valid input interface");
     let tx_iface = matches.value_of("out").unwrap_or(rx_iface);
-    let ncpus = get_cpu_count();
+    let ncpus = util::get_cpu_count();
     println!("interfaces: [Rx: {}, Tx: {}] cores: {}", rx_iface, tx_iface, ncpus);
     read_uptime();
     run(&rx_iface, &tx_iface);
