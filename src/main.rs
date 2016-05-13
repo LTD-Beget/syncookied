@@ -38,6 +38,7 @@ mod sha1;
 mod packet;
 mod csum;
 mod util;
+mod tx;
 use packet::{Action,IngressPacket};
 use netmap::{Direction,NetmapDescriptor,NetmapRing,NetmapSlot,TxSlot,RxSlot};
 
@@ -63,171 +64,9 @@ impl RxStats {
     }
 }
 
-#[derive(Debug,Default)]
-struct TxStats {
-    pub sent: usize,
-    pub failed: usize,
-}
-
-impl TxStats {
-    pub fn empty() -> Self {
-        Default::default()
-    }
-
-    pub fn clear(&mut self) {
-        *self = Default::default();
-    }
-}
-
-enum OutgoingPacket {
+pub enum OutgoingPacket {
     Ingress(IngressPacket),
     Forwarded((usize, usize)),
-}
-
-#[inline]
-fn send(pkt: OutgoingPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxStats, lock: Arc<AtomicUsize>, ring_num: u16) {
-    match pkt {
-        OutgoingPacket::Ingress(pkt) => {
-            if let Some(len) = packet::handle_reply(pkt, buf) {
-                //println!("[TX#{}] SENDING PACKET\n", ring_num);
-                slot.set_flags(netmap::NS_BUF_CHANGED as u16 /* | netmap::NS_REPORT as u16 */);
-                slot.set_len(len as u16);
-                stats.sent += 1;
-            } else {
-                stats.failed += 1;
-            }
-        },
-        OutgoingPacket::Forwarded((slot_ptr, buf_ptr)) => {
-            use std::slice;
-            /* swap buffers (zero copy) */
-            let rx_slot: &mut TxSlot = unsafe { mem::transmute(slot_ptr as *mut TxSlot) };
-            let tx_idx = slot.get_buf_idx();
-            let tx_len = slot.get_len();
-
-            slot.set_buf_idx(rx_slot.get_buf_idx());
-            slot.set_len(rx_slot.get_len());
-            slot.set_flags(netmap::NS_BUF_CHANGED);
-
-            rx_slot.set_buf_idx(tx_idx);
-            rx_slot.set_len(tx_len);
-            rx_slot.set_flags(netmap::NS_BUF_CHANGED as u16);
-
-            {
-                let to_forward = lock;
-                if to_forward.fetch_sub(1, Ordering::SeqCst) == 1 {
-                    //println!("[TX#{}]: forwarding done", ring_num);
-                } else {
-                    //println!("[TX#{}]: forwarding, {} left", ring_num, to_forward.load(Ordering::SeqCst));
-                }
-            }
-
-            let mut buf = unsafe { slice::from_raw_parts_mut::<u8>(buf_ptr as *mut u8, slot.get_len() as usize) };
-/*
-            {
-                packet::dump_input(&buf);
-                println!("[TX#{}]: received slot: {:x} buf: {:x}, buf_idx: {} (was buf_idx: {})",
-                    ring_num, slot_ptr, buf_ptr, slot.get_buf_idx(), tx_idx);
-            }
-*/
-            {
-                let mut eth = MutableEthernetPacket::new(&mut buf[0..]).unwrap();
-                eth.set_destination(MacAddr::new(0x90, 0xe2, 0xba, 0xb8, 0x56, 0x89));
-                eth.set_source(MacAddr::new(0x90, 0xe2, 0xba, 0xb8, 0x56, 0x88));
-            }
-            stats.sent += 1;
-        }
-    };
-}
-
-fn tx_loop(ring_num: u16, cpu: usize, chan: mpsc::Receiver<OutgoingPacket>,
-            netmap: &mut NetmapDescriptor, lock: Arc<AtomicUsize>) {
-    let mut stats = TxStats::empty();
-    println!("TX loop for ring {:?}", ring_num);
-    println!("Tx rings: {:?}", netmap.get_tx_rings());
-
-    util::set_thread_name(&format!("syncookied/tx{:02}", ring_num));
-
-    scheduler::set_self_affinity(CpuSet::single(cpu)).expect("setting affinity failed");
-    scheduler::set_self_policy(Policy::Fifo, 20).expect("setting sched policy failed");
-
-    /* wait for card to reinitialize */
-    thread::sleep_ms(1000);
-
-    let mut before = time::Instant::now();
-    let seconds: usize = 10;
-    let ival = time::Duration::new(seconds as u64, 0);
-    let mut rate: usize = 0;
-
-    loop {
-        //let fd = netmap.get_fd();
-        /* block and wait for packet in queue */
-        if let Some(_) = netmap.poll(netmap::Direction::Output) {
-            if let Some(ring) = netmap.tx_iter().next() {
-                let mut tx_iter = ring.iter();
-
-                /* send one packet */
-                if let Some((slot, buf)) = tx_iter.next() {
-                    if buf.len() < packet::MIN_REPLY_BUF_LEN {
-                        slot.set_len(0);
-                        stats.failed += 1;
-                        continue;
-                    }
-                    let pkt = chan.recv().expect("Expected RX not to die on us");
-                    send(pkt, slot, buf, &mut stats, lock.clone(), ring_num);
-                }
-                /* try to send more if we have any (non-blocking) */
-                for (slot, buf) in tx_iter {
-                    if buf.len() < packet::MIN_REPLY_BUF_LEN {
-                        slot.set_len(0);
-                        stats.failed += 1;
-                        continue;
-                    }
-                    match chan.try_recv() {
-                        Ok(pkt) => send(pkt, slot, buf, &mut stats, lock.clone(), ring_num),
-                        Err(TryRecvError::Empty) => break,
-                        Err(TryRecvError::Disconnected) => panic!("Expected RX not to die on us"),
-                    }
-                    if rate <= 1000 {
-                        break; // do tx sync on every packet if we receive
-                        // small amount of packets
-                    } else if rate <= 10000 && stats.sent % 64 == 0 {
-                        break;
-                    } else if rate <= 100_000 && stats.sent % 128 == 0 {
-                        break;
-                    } else if /* rate <= 1000_000 && */ stats.sent % 1024 == 0 {
-                        break;
-                    }
-                }
-            }
-        }
-        if before.elapsed() >= ival {
-            rate = stats.sent/seconds;
-            println!("[TX#{}]: sent {}Pkts/s, failed {}Pkts/s", ring_num, rate, stats.failed/seconds);
-            stats.clear();
-            before = time::Instant::now();
-        }
-    }
-}
-
-fn host_rx_loop(ring_num: usize, netmap: &mut NetmapDescriptor) {
-        println!("HOST RX loop for ring {:?}", ring_num);
-        println!("Rx rings: {:?}", netmap.get_rx_rings());
-
-        scheduler::set_self_affinity(CpuSet::single(ring_num)).expect("setting affinity failed");
-        scheduler::set_self_policy(Policy::Fifo, 20).expect("setting sched policy failed");
-
-        loop {
-            if let Some(_) = netmap.poll(netmap::Direction::Input) {
-                for ring in netmap.rx_iter() {
-                    for (slot, _) in ring.iter() {
-                        //println!("HOST RX pkt");
-                        //packet::dump_input(&buf);
-                        slot.set_flags(netmap::NS_FORWARD as u16);
-                    }
-                    ring.set_flags(netmap::NR_FORWARD as u32);
-                }
-            }
-        }
 }
 
 fn rx_loop(ring_num: u16, cpu: usize, chan: mpsc::SyncSender<OutgoingPacket>,
@@ -301,7 +140,7 @@ fn rx_loop(ring_num: u16, cpu: usize, chan: mpsc::SyncSender<OutgoingPacket>,
         }
 }
 
-fn run(rx_iface: &str, tx_iface: &str) {
+fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, fwd_mac: MacAddr) {
     use std::sync::{Mutex,Arc};
 
     let rx_nm = Arc::new(Mutex::new(NetmapDescriptor::new(rx_iface).unwrap()));
@@ -355,7 +194,8 @@ fn run(rx_iface: &str, tx_iface: &str) {
                     nm.clone_ring(ring, Direction::Output).unwrap()
                 };
                 let cpu = /* rx_count as usize + */ ring as usize; /* HACK */
-                tx_loop(ring, cpu, rx, &mut ring_nm, pair)
+                let sender = tx::Sender::new(ring, cpu, rx, &mut ring_nm, pair, rx_mac.clone(), fwd_mac);
+                sender.run();
             });
         }
 
@@ -463,5 +303,5 @@ fn main() {
     let ncpus = util::get_cpu_count();
     println!("interfaces: [Rx: {}/{}, Tx: {}] Fwd to: {} Cores: {}", rx_iface, rx_mac, tx_iface, fwd_mac, ncpus);
     read_uptime();
-    run(&rx_iface, &tx_iface);
+    run(&rx_iface, &tx_iface, rx_mac, fwd_mac);
 }
