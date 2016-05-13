@@ -100,7 +100,7 @@ pub fn handle_reply(pkt: IngressPacket, tx_slice: &mut [u8]) -> Option<usize> {
     if len < 78 {
         None
     } else {
-        Some(build_reply(&pkt, tx_slice))
+        Some(build_reply_2(&pkt, tx_slice))
     }
 }
 
