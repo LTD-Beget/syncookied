@@ -143,8 +143,10 @@ impl RxRing {
 
     #[inline]
     pub fn iter(&mut self) -> RxSlotIter {
+        let cur = self.0.cur;
         RxSlotIter {
-            ring: self
+            ring: self,
+            cur: cur,
         }
     }
 }
@@ -173,7 +175,8 @@ impl NetmapRing for RxRing {
 }
 
 pub struct RxSlotIter<'a> {
-    ring: &'a mut RxRing
+    ring: &'a mut RxRing,
+    cur: u32,
 }
 
 impl<'a> Iterator for RxSlotIter<'a> {
@@ -181,15 +184,25 @@ impl<'a> Iterator for RxSlotIter<'a> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
+        self.ring.0.cur = self.cur;
+        self.ring.0.head = self.ring.0.cur;
+
         if self.ring.is_empty() {
             return None;
         }
-        let cur = self.ring.0.cur;
+        let cur = self.cur;
         let slots = self.ring.0.slot.as_mut_ptr();
         let slot: &mut RxSlot = unsafe { mem::transmute(slots.offset(cur as isize)) };
         let buf = slot.get_buf(self.ring);
-        self.ring.next_slot();
+        self.cur = if self.cur + 1 == self.ring.0.num_slots { 0 } else { self.cur + 1 };
         Some((slot, buf))
+    }
+}
+
+impl<'a> Drop for RxSlotIter<'a> {
+    fn drop(&mut self) {
+        self.ring.0.cur = self.cur;
+        self.ring.0.head = self.ring.0.cur;
     }
 }
 
@@ -228,10 +241,11 @@ impl TxRing {
     }
 
     #[inline]
-    pub fn iter(&mut self, fd: i32) -> TxSlotIter {
+    pub fn iter(&mut self) -> TxSlotIter {
+        let cur = self.0.cur;
         TxSlotIter {
             ring: self,
-            fd: fd
+            cur: cur,
         }
     }
 }
@@ -299,7 +313,7 @@ impl<'d> Iterator for TxRingIter<'d> {
 /// Slot and buffer iterator
 pub struct TxSlotIter<'a> {
     ring: &'a mut TxRing,
-    fd: i32
+    cur: u32
 }
 
 impl<'a> Iterator for TxSlotIter<'a> {
@@ -307,18 +321,25 @@ impl<'a> Iterator for TxSlotIter<'a> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        //unsafe { libc::ioctl(self.fd, netmap::NIOCTXSYNC as u64, 0 as u64) };
+        self.ring.0.cur = self.cur;
+        self.ring.0.head = self.ring.0.cur;
 
         if self.ring.is_empty() {
             return None;
         }
-        let cur = self.ring.0.cur;
+        let cur = self.cur;
         let slots = self.ring.0.slot.as_mut_ptr();
         let slot: &mut TxSlot = unsafe { mem::transmute(slots.offset(cur as isize)) };
         let buf = slot.get_buf_mut(self.ring);
-        self.ring.next_slot();
-        //unsafe { libc::ioctl(self.fd, netmap::NIOCTXSYNC as u64, 0 as u64) };
+        self.cur = if self.cur + 1 == self.ring.0.num_slots { 0 } else { self.cur + 1 };
         Some((slot, buf))
+    }
+}
+
+impl<'a> Drop for TxSlotIter<'a> {
+    fn drop(&mut self) {
+        self.ring.0.cur = self.cur;
+        self.ring.0.head = self.ring.0.cur;
     }
 }
 
@@ -385,7 +406,7 @@ impl NetmapDescriptor {
         let netmap_desc = unsafe {
             netmap_user::nm_open(netmap_ifname.as_ptr(),
                                  ptr::null(),
-                                 netmap_user::NM_OPEN_NO_MMAP as u64 | netmap_user::NM_OPEN_IFNAME as u64,
+                                 netmap_user::NM_OPEN_NO_MMAP as u64 | netmap_user::NM_OPEN_IFNAME as u64 /* | flag as u64 */,
                                  &mut nm_desc_raw)
         };
         if netmap_desc == ptr::null_mut() {
@@ -468,6 +489,10 @@ impl NetmapDescriptor {
 
         let rv = unsafe { libc::poll(&mut pollfd, 1, 1000) };
         if rv <= 0 {
+            return None;
+        }
+        if pollfd.revents & libc::POLLERR == libc::POLLERR {
+            println!("POLLERR!");
             return None;
         }
         Some(())
