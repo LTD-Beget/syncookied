@@ -39,6 +39,7 @@ mod packet;
 mod csum;
 mod util;
 mod tx;
+mod rx;
 use packet::{Action,IngressPacket};
 use netmap::{Direction,NetmapDescriptor,NetmapRing,NetmapSlot,TxSlot,RxSlot};
 
@@ -46,98 +47,9 @@ pub static TCP_TIME_STAMP: AtomicUsize = ATOMIC_USIZE_INIT;
 pub static TCP_COOKIE_TIME: AtomicUsize = ATOMIC_USIZE_INIT;
 pub static mut syncookie_secret: [[u32;17];2] = [[0;17];2];
 
-#[derive(Debug,Default)]
-struct RxStats {
-    pub received: usize,
-    pub dropped: usize,
-    pub forwarded: usize,
-    pub queued: usize,
-}
-
-impl RxStats {
-    pub fn empty() -> Self {
-        Default::default()
-    }
-
-    pub fn clear(&mut self) {
-        *self = Default::default();
-    }
-}
-
 pub enum OutgoingPacket {
     Ingress(IngressPacket),
     Forwarded((usize, usize)),
-}
-
-fn rx_loop(ring_num: u16, cpu: usize, chan: mpsc::SyncSender<OutgoingPacket>,
-        netmap: &mut NetmapDescriptor, lock: Arc<AtomicUsize>) {
-        let mut stats = RxStats::empty();
-
-        println!("RX loop for ring {:?}", ring_num);
-        println!("Rx rings: {:?}", netmap.get_rx_rings());
-
-        util::set_thread_name(&format!("syncookied/rx{:02}", ring_num));
-
-        scheduler::set_self_affinity(CpuSet::single(cpu)).expect("setting affinity failed");
-        scheduler::set_self_policy(Policy::Fifo, 20).expect("setting sched policy failed");
-
-        thread::sleep_ms(1000);
-
-        let mut before = time::Instant::now();
-        let seconds: usize = 10;
-        let ival = time::Duration::new(seconds as u64, 0);
-
-        loop {
-            if let Some(_) = netmap.poll(netmap::Direction::Input) {
-                if let Some(ring) = netmap.rx_iter().next() {
-                    let mut fw = false;
-                    for (slot, buf) in ring.iter() {
-                        stats.received += 1;
-                        match packet::handle_input(buf) {
-                            Action::Drop => {
-                                stats.dropped += 1;
-                            },
-                            Action::Forward => {
-                                let to_forward = &lock;
-
-                                let slot_ptr: usize = slot as *mut RxSlot as usize;
-                                let buf_ptr: usize = buf.as_ptr() as usize;
-
-/*
-                                println!("[RX#{}]: forwarded slot: {:x} buf: {:x}, buf_idx: {}",
-                                    ring_num, slot_ptr, buf_ptr, slot.get_buf_idx());
-*/
-                                to_forward.fetch_add(1, Ordering::SeqCst);
-                                chan.send(OutgoingPacket::Forwarded((slot_ptr, buf_ptr)));
-                                stats.forwarded += 1;
-                                fw = true;
-                            },
-                            Action::Reply(packet) => {
-                                stats.queued += 1;
-                                chan.send(OutgoingPacket::Ingress(packet));
-                            },
-                        }
-                    }
-                    /*if fw {
-                        ring.set_flags(netmap::NR_FORWARD as u32);
-                    }*/
-                    if fw {
-                        let to_forward = &lock;
-                        while to_forward.load(Ordering::SeqCst) != 0 {
-                            unsafe { libc::sched_yield() };
-                            //println!("[RX#{}]: waiting for forwarding to happen, {} left", ring_num, to_forward.load(Ordering::SeqCst));
-                        }
-                    }
-                }
-            }
-            if before.elapsed() >= ival {
-                println!("[RX#{}]: received: {}Pkts/s, dropped: {}Pkts/s, forwarded: {}Pkts/s, queued: {}Pkts/s",
-                            ring_num, stats.received/seconds, stats.dropped/seconds,
-                            stats.forwarded/seconds, stats.queued/seconds);
-                stats.clear();
-                before = time::Instant::now();
-            }
-        }
 }
 
 fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, fwd_mac: MacAddr) {
@@ -183,7 +95,7 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, fwd_mac: MacAddr) {
                     nm.clone_ring(ring, Direction::Input).unwrap()
                 };
                 let cpu = ring as usize;
-                rx_loop(ring, cpu, tx, &mut ring_nm, rx_pair)
+                rx::Receiver::new(ring, cpu, tx, &mut ring_nm, rx_pair).run();
             });
 
             let tx_nm = tx_nm.clone();
@@ -194,8 +106,7 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, fwd_mac: MacAddr) {
                     nm.clone_ring(ring, Direction::Output).unwrap()
                 };
                 let cpu = /* rx_count as usize + */ ring as usize; /* HACK */
-                let sender = tx::Sender::new(ring, cpu, rx, &mut ring_nm, pair, rx_mac.clone(), fwd_mac);
-                sender.run();
+                tx::Sender::new(ring, cpu, rx, &mut ring_nm, pair, rx_mac.clone(), fwd_mac).run();
             });
         }
 
