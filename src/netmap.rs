@@ -330,6 +330,7 @@ impl<'a> Iterator for TxSlotIter<'a> {
         let cur = self.cur;
         let slots = self.ring.0.slot.as_mut_ptr();
         let slot: &mut TxSlot = unsafe { mem::transmute(slots.offset(cur as isize)) };
+        slot.set_len(2048);
         let buf = slot.get_buf_mut(self.ring);
         self.cur = if self.cur + 1 == self.ring.0.num_slots { 0 } else { self.cur + 1 };
         Some((slot, buf))
