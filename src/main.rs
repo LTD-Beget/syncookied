@@ -120,14 +120,20 @@ fn send(pkt: OutgoingPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxSt
             {
                 let to_forward = lock;
                 if to_forward.fetch_sub(1, Ordering::SeqCst) == 1 {
-                    println!("[TX#{}]: forwarding done", ring_num);
+                    //println!("[TX#{}]: forwarding done", ring_num);
                 } else {
-                    println!("[TX#{}]: forwarding, {} left", ring_num, to_forward.load(Ordering::SeqCst));
+                    //println!("[TX#{}]: forwarding, {} left", ring_num, to_forward.load(Ordering::SeqCst));
                 }
             }
 
             let mut buf = unsafe { slice::from_raw_parts_mut::<u8>(buf_ptr as *mut u8, slot.get_len() as usize) };
-
+/*
+            {
+                packet::dump_input(&buf);
+                println!("[TX#{}]: received slot: {:x} buf: {:x}, buf_idx: {} (was buf_idx: {})",
+                    ring_num, slot_ptr, buf_ptr, slot.get_buf_idx(), tx_idx);
+            }
+*/
             {
                 let mut eth = MutableEthernetPacket::new(&mut buf[0..]).unwrap();
                 eth.set_destination(MacAddr::new(0x90, 0xe2, 0xba, 0xb8, 0x56, 0x89));
@@ -158,23 +164,27 @@ fn tx_loop(ring_num: u16, cpu: usize, chan: mpsc::Receiver<OutgoingPacket>,
     let mut rate: usize = 0;
 
     loop {
-        let fd = netmap.get_fd();
+        //let fd = netmap.get_fd();
         /* block and wait for packet in queue */
-        let pkt = chan.recv().expect("Expected RX not to die on us");
         if let Some(_) = netmap.poll(netmap::Direction::Output) {
             if let Some(ring) = netmap.tx_iter().next() {
-                let mut tx_iter = ring.iter(fd);
+                let mut tx_iter = ring.iter();
 
                 /* send one packet */
                 if let Some((slot, buf)) = tx_iter.next() {
                     if buf.len() < packet::MIN_REPLY_BUF_LEN {
+                        slot.set_len(0);
+                        stats.failed += 1;
                         continue;
                     }
+                    let pkt = chan.recv().expect("Expected RX not to die on us");
                     send(pkt, slot, buf, &mut stats, lock.clone(), ring_num);
                 }
                 /* try to send more if we have any (non-blocking) */
                 for (slot, buf) in tx_iter {
                     if buf.len() < packet::MIN_REPLY_BUF_LEN {
+                        slot.set_len(0);
+                        stats.failed += 1;
                         continue;
                     }
                     match chan.try_recv() {
@@ -245,7 +255,7 @@ fn rx_loop(ring_num: u16, cpu: usize, chan: mpsc::SyncSender<OutgoingPacket>,
 
         loop {
             if let Some(_) = netmap.poll(netmap::Direction::Input) {
-                for ring in netmap.rx_iter() {
+                if let Some(ring) = netmap.rx_iter().next() {
                     let mut fw = false;
                     for (slot, buf) in ring.iter() {
                         stats.received += 1;
@@ -259,6 +269,10 @@ fn rx_loop(ring_num: u16, cpu: usize, chan: mpsc::SyncSender<OutgoingPacket>,
                                 let slot_ptr: usize = slot as *mut RxSlot as usize;
                                 let buf_ptr: usize = buf.as_ptr() as usize;
 
+/*
+                                println!("[RX#{}]: forwarded slot: {:x} buf: {:x}, buf_idx: {}",
+                                    ring_num, slot_ptr, buf_ptr, slot.get_buf_idx());
+*/
                                 to_forward.fetch_add(1, Ordering::SeqCst);
                                 chan.send(OutgoingPacket::Forwarded((slot_ptr, buf_ptr)));
                                 stats.forwarded += 1;
@@ -277,7 +291,7 @@ fn rx_loop(ring_num: u16, cpu: usize, chan: mpsc::SyncSender<OutgoingPacket>,
                         let to_forward = &lock;
                         while to_forward.load(Ordering::SeqCst) != 0 {
                             unsafe { libc::sched_yield() };
-                            println!("[RX#{}]: waiting for forwarding to happen, {} left", ring_num, to_forward.load(Ordering::SeqCst));
+                            //println!("[RX#{}]: waiting for forwarding to happen, {} left", ring_num, to_forward.load(Ordering::SeqCst));
                         }
                     }
                 }

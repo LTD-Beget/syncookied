@@ -49,8 +49,15 @@ pub fn dump_input(packet_data: &[u8]) {
     println!("{:?}", &eth);
     match eth.get_ethertype() {
         EtherTypes::Ipv4 => {
-            let ipv4 = Ipv4Packet::new(eth.payload());
+            let ipv4 = Ipv4Packet::new(eth.payload()).unwrap();
             println!("{:?}", ipv4);
+            match ipv4.get_next_level_protocol() {
+                IpNextHeaderProtocols::Tcp  => { 
+                    let tcp = TcpPacket::new(ipv4.payload()).unwrap();
+                    println!("{:?}", tcp);
+                },
+                _ => {},
+            }
         },
         _ => {},
     };
@@ -190,7 +197,7 @@ fn handle_tcp_packet(source: IpAddr, destination: IpAddr, packet: &[u8],
     if let Some(tcp) = tcp {
         //println!("TCP Packet: {}:{} > {}:{}; length: {}", source,
         //            tcp.get_source(), destination, tcp.get_destination(), packet.len());
-        if tcp.get_flags() & TcpFlags::SYN != 0 && tcp.get_flags() & TcpFlags::ACK == 0 {
+        if tcp.get_flags() & (TcpFlags::SYN | TcpFlags::ACK) == TcpFlags::SYN {
             //println!("TCP Packet: {:?}", tcp);
             pkt.tcp_source = tcp.get_source();
             pkt.tcp_destination = tcp.get_destination();
@@ -236,12 +243,18 @@ fn handle_ipv4_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket) -> Act
 }
 
 fn handle_ether_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket) -> Action {
+    let mac_dest = ethernet.get_destination();
+
+    if mac_dest != MacAddr::new(0x90, 0xe2, 0xba, 0xb8, 0x56, 0x88) {
+        return Action::Drop;
+    }
     match ethernet.get_ethertype() {
         EtherTypes::Ipv4 => {
             pkt.ether_source = ethernet.get_source();
             pkt.ether_dest = ethernet.get_destination();
             handle_ipv4_packet(ethernet, pkt)
         },
+        EtherTypes::Arp => Action::Drop,
         _  => Action::Forward
     }
 }
