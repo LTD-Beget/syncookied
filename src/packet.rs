@@ -13,6 +13,28 @@ use pnet::util::MacAddr;
 use ::cookie;
 use ::csum;
 
+lazy_static! {
+    static ref REPLY_TEMPLATE: Vec<u8> = {
+        let mut data: Vec<u8> = vec![0;78];
+        /* prepare data common to all packets beforehand */
+        {
+            let pkt = IngressPacket {
+                ether_source: MacAddr::new(0, 0, 0, 0, 0, 0),
+                ether_dest: MacAddr::new(0, 0, 0, 0, 0, 0),
+                ipv4_source: Ipv4Addr::new(127, 0, 0, 1),
+                ipv4_destination: Ipv4Addr::new(127, 0, 0, 1),
+                tcp_source: 0,
+                tcp_destination: 0,
+                tcp_timestamp: [0, 0, 0, 0],
+                tcp_sequence: 0,
+                tcp_mss: 1460,
+            };
+            build_reply(&pkt, &mut data);
+        }
+        data
+    };
+}
+
 pub const MIN_REPLY_BUF_LEN: usize = 78;
 
 #[allow(dead_code)]
@@ -85,6 +107,88 @@ pub fn handle_reply(pkt: IngressPacket, tx_slice: &mut [u8]) -> Option<usize> {
 #[inline]
 fn u32_to_oct(bits: u32) -> [u8; 4] {
     [(bits >> 24) as u8, (bits >> 16) as u8, (bits >> 8) as u8, bits as u8]
+}
+
+fn build_reply_fast(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
+    let mut len = 0;
+    let ether_len;
+    /* build ethernet packet */
+    let mut ether = MutableEthernetPacket::new(reply).unwrap();
+
+    ether.set_source(pkt.ether_dest);
+    ether.set_destination(pkt.ether_source);
+
+    ether_len = ether.packet_size();
+    len += ether_len;
+
+    /* build ip packet */
+    let mut ip = MutableIpv4Packet::new(ether.payload_mut()).unwrap();
+    ip.set_source(pkt.ipv4_destination);
+    ip.set_destination(pkt.ipv4_source);
+    ip.set_checksum(0);
+    len += ip.packet_size();
+
+    {
+        use std::ptr;
+        /* build tcp packet */
+        let cookie_time = ::TCP_COOKIE_TIME.load(Ordering::Relaxed);
+        let (seq_num, mss_val) = cookie::generate_cookie_init_sequence(
+            pkt.ipv4_source, pkt.ipv4_destination,
+            pkt.tcp_source, pkt.tcp_destination, pkt.tcp_sequence,
+            1460 /* FIXME */, cookie_time as u32);
+        let mut tcp = MutableTcpPacket::new(&mut ip.payload_mut()[0..20 + 24]).unwrap();
+        tcp.set_source(pkt.tcp_destination);
+        tcp.set_destination(pkt.tcp_source);
+        tcp.set_sequence(seq_num);
+        tcp.set_acknowledgement(pkt.tcp_sequence + 1);
+        tcp.set_checksum(0);
+
+        {
+            let options = tcp.get_options_raw_mut();
+            { /* Timestamp */
+                let my_tcp_time = ::TCP_TIME_STAMP.load(Ordering::Relaxed) as u32;
+                /*
+                let in_options = tcp_in.get_options_iter();
+                let mut their_time = &mut [0, 0, 0, 0][..];
+                if let Some(ts_option) = in_options.filter(|opt| (*opt).get_number() == TcpOptionNumbers::TIMESTAMPS).nth(0) {
+                    unsafe { ptr::copy_nonoverlapping::<u8>(ts_option.payload()[0..4].as_ptr(), their_time.as_mut_ptr(), 4) };
+                }
+                */
+                let mut ts = MutableTcpOptionPacket::new(&mut options[6..16]).unwrap();
+                ts.set_number(TcpOptionNumbers::TIMESTAMPS);
+                ts.get_length_raw_mut()[0] = 10;
+                let mut stamps = ts.payload_mut();
+                unsafe {
+                    ptr::copy_nonoverlapping::<u8>(u32_to_oct(cookie::synproxy_init_timestamp_cookie(7, 1, 0, my_tcp_time)).as_ptr(), stamps[..].as_mut_ptr(), 4);
+                    ptr::copy_nonoverlapping::<u8>(pkt.tcp_timestamp.as_ptr(), stamps[4..].as_mut_ptr(), 4);
+                }
+            }
+        }
+        let cksum = {
+            let tcp = tcp.to_immutable();
+            csum::tcp_checksum(&tcp, pkt.ipv4_destination, pkt.ipv4_source, IpNextHeaderProtocols::Tcp).to_be()
+        };
+        tcp.set_checksum(cksum);
+        len += tcp.packet_size();
+    }
+
+    ip.set_total_length((len - ether_len) as u16);
+    let ip_cksum = {
+        let ip = ip.to_immutable();
+        csum::ip_checksum(&ip).to_be()
+    };
+    ip.set_checksum(ip_cksum);
+
+    //println!("REPLY: {:?}", &ip);
+    len
+}
+
+fn build_reply_2(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
+    use std::ptr;
+    unsafe {
+        ptr::copy_nonoverlapping::<u8>(REPLY_TEMPLATE.as_ptr(), reply.as_mut_ptr(), 78);
+    }
+    build_reply_fast(pkt, reply)
 }
 
 fn build_reply(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
