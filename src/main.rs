@@ -30,7 +30,7 @@ use pnet::util::MacAddr;
 
 use scheduler::{CpuSet,Policy};
 
-use clap::{Arg, App, SubCommand};
+use clap::{Arg, App, AppSettings, SubCommand};
 
 mod netmap;
 mod cookie;
@@ -40,6 +40,8 @@ mod csum;
 mod util;
 mod tx;
 mod rx;
+mod uptime;
+use uptime::UptimeReader;
 use packet::{Action,IngressPacket};
 use netmap::{Direction,NetmapDescriptor,NetmapRing,NetmapSlot,TxSlot,RxSlot};
 
@@ -52,7 +54,7 @@ pub enum OutgoingPacket {
     Forwarded((usize, usize)),
 }
 
-fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, fwd_mac: MacAddr) {
+fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, fwd_mac: MacAddr, uptime_reader: Box<UptimeReader>) {
     use std::sync::{Mutex,Arc};
 
     let rx_nm = Arc::new(Mutex::new(NetmapDescriptor::new(rx_iface).unwrap()));
@@ -75,8 +77,9 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, fwd_mac: MacAddr) {
     }
 
     crossbeam::scope(|scope| {
-        scope.spawn(|| loop {
-            read_uptime();
+        scope.spawn(move|| loop {
+            let buf = uptime_reader.read();
+            uptime::update(buf);
             thread::sleep_ms(1000);
         });
 
@@ -129,55 +132,23 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, fwd_mac: MacAddr) {
     });
 }
 
-pub fn read_uptime() {
-    use std::fs::File;
-    use std::io::prelude::*;
-    use std::io::BufReader;
-    let file = File::open("/proc/beget_uptime").unwrap();
-    let reader = BufReader::new(file);
-    let mut jiffies = 0;
-    let mut tcp_cookie_time = 0;
-    //let mut syncookie_secret: [[u32;17]; 2] = [[0;17]; 2];
-    for (idx, line) in reader.lines().enumerate() {
-        let line = line.unwrap();
-        match idx {
-            0 => {
-                for (idx, word) in line.split(' ').enumerate() {
-                    match idx {
-                        0 => { jiffies = word.parse::<u64>().unwrap() },
-                        1 => { tcp_cookie_time = word.parse::<u32>().unwrap() },
-                        _ => {},
-                    }
-                }
-            },
-            1 => {
-                for (idx, word) in line.split('.').enumerate() {
-                    if word == "" {
-                        continue;
-                    }
-                    unsafe { syncookie_secret[0][idx] = u32::from_str_radix(word, 16).unwrap() };
-                }
-            },
-            2 => {
-                for (idx, word) in line.split('.').enumerate() {
-                    if word == "" {
-                        continue;
-                    }
-                    unsafe { syncookie_secret[1][idx] = u32::from_str_radix(word, 16).unwrap() };
-                }
-            },
-            _ => {},
-        }
-    }
-    //println!("jiffies: {}, tcp_cookie_time: {}, syncookie_secret: {:?}", jiffies, tcp_cookie_time, unsafe { syncookie_secret });
-    TCP_TIME_STAMP.store(jiffies as usize & 0xffffffff, Ordering::SeqCst);
-    TCP_COOKIE_TIME.store(tcp_cookie_time as usize, Ordering::SeqCst);
-}
-
 fn main() {
     let matches = App::new("syncookied")
                               .version("0.1")
                               .author("Alexander Polyakov <apolyakov@beget.ru>")
+                              .setting(AppSettings::SubcommandsNegateReqs)
+                              .subcommand(
+                                SubCommand::with_name("server")
+                                .about("Run /proc/beget_uptime reader")
+                                .arg(Arg::with_name("addr")
+                                     .takes_value(true)
+                                     .value_name("ip:port")
+                                     .help("ip:port to listen on"))
+                              )
+                              .arg(Arg::with_name("local")
+                                   .long("local")
+                                   .conflicts_with("remote")
+                                   .help("Operate on a single host"))
                               .arg(Arg::with_name("in")
                                    .short("i")
                                    .long("input-interface")
@@ -195,24 +166,42 @@ fn main() {
                                     .short("I")
                                     .required(true)
                                     .long("input-mac")
-                                    .value_name("macaddr")
+                                    .value_name("xx:xx:xx:xx:xx:xx")
                                     .help("Input interface mac address")
+                                    .takes_value(true))
+                               .arg(Arg::with_name("remote")
+                                    .required_unless("local")
+                                    .long("remote")
+                                    .value_name("ip:port")
+                                    .help("ip:port to get uptime from")
                                     .takes_value(true))
                                .arg(Arg::with_name("fwd-mac")
                                     .short("F")
                                     .required(true)
                                     .long("forward-to")
-                                    .value_name("macaddr")
+                                    .value_name("xx:xx:xx:xx:xx:xx")
                                     .help("Mac address we forward to")
                                     .takes_value(true))
                                .get_matches();
 
-    let rx_iface = matches.value_of("in").expect("Expected valid input interface");
-    let tx_iface = matches.value_of("out").unwrap_or(rx_iface);
-    let rx_mac = matches.value_of("in-mac").map(util::parse_mac).expect("Expected valid mac").unwrap();
-    let fwd_mac = matches.value_of("fwd-mac").map(util::parse_mac).expect("Expected valid mac").unwrap();
-    let ncpus = util::get_cpu_count();
-    println!("interfaces: [Rx: {}/{}, Tx: {}] Fwd to: {} Cores: {}", rx_iface, rx_mac, tx_iface, fwd_mac, ncpus);
-    read_uptime();
-    run(&rx_iface, &tx_iface, rx_mac, fwd_mac);
+    if let Some(matches) = matches.subcommand_matches("server") {
+        let addr = matches.value_of("addr").unwrap_or("127.0.0.1:1488"); 
+        println!("running server on {}", addr);
+        uptime::run_server(addr);
+    } else {
+        let rx_iface = matches.value_of("in").expect("Expected valid input interface");
+        let tx_iface = matches.value_of("out").unwrap_or(rx_iface);
+        let rx_mac = matches.value_of("in-mac").map(util::parse_mac).expect("Expected valid mac").unwrap();
+        let fwd_mac = matches.value_of("fwd-mac").map(util::parse_mac).expect("Expected valid mac").unwrap();
+        let local = matches.is_present("local");
+        let ncpus = util::get_cpu_count();
+        let uptime_reader: Box<UptimeReader> = if local {
+            Box::new(uptime::LocalReader)
+        } else {
+            let addr = matches.value_of("remote").expect("Expected valid remote addr");
+            Box::new(uptime::UdpReader::new(addr.to_owned()))
+        };
+        println!("interfaces: [Rx: {}/{}, Tx: {}] Fwd to: {} Cores: {} Local: {}", rx_iface, rx_mac, tx_iface, fwd_mac, ncpus, local);
+        run(&rx_iface, &tx_iface, rx_mac, fwd_mac, uptime_reader);
+    }
 }
