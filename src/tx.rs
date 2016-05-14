@@ -95,16 +95,16 @@ impl<'a> Sender<'a> {
                             Err(TryRecvError::Empty) => break,
                             Err(TryRecvError::Disconnected) => panic!("Expected RX not to die on us"),
                         }
+/*
                         if rate <= 1000 {
                             break; // do tx sync on every packet if we receive
                             // small amount of packets
-                        } else if rate <= 10000 && self.stats.sent % 64 == 0 {
+                        } else if rate <= 10_000 && self.stats.sent % 64 == 0 {
                             break;
                         } else if rate <= 100_000 && self.stats.sent % 128 == 0 {
                             break;
-                        } else if /* rate <= 1000_000 && */ self.stats.sent % 1024 == 0 {
-                            break;
                         }
+*/
                     }
                 }
             }

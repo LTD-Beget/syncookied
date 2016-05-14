@@ -82,7 +82,7 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, fwd_mac: MacAddr) {
 
         for ring in 0..rx_count {
             let ring = ring;
-            let (tx, rx) = mpsc::sync_channel(1024 * 1024);
+            let (tx, rx) = mpsc::sync_channel(2 * 1024 * 1024);
             let pair = Arc::new(AtomicUsize::new(0));
             let rx_pair = pair.clone();
 

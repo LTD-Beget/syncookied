@@ -356,7 +356,7 @@ fn handle_ether_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket, mac: 
     match ethernet.get_ethertype() {
         EtherTypes::Ipv4 => {
             pkt.ether_source = ethernet.get_source();
-            pkt.ether_dest = ethernet.get_destination();
+            pkt.ether_dest = mac_dest;
             handle_ipv4_packet(ethernet, pkt)
         },
         EtherTypes::Arp => Action::Drop,
