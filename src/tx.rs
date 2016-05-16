@@ -84,26 +84,15 @@ impl<'a> Sender<'a> {
                     /* send one packet */
                     if let Some((slot, buf)) = tx_iter.next() {
                         let pkt = self.chan.recv().expect("Expected RX not to die on us");
-                        let fwd = Self::send(pkt, slot, buf, &mut self.stats,
+                        Self::send(pkt, slot, buf, &mut self.stats, &mut self.lock,
                                    self.ring_num, self.source_mac, self.destination_mac);
-                        if fwd {
-                            let to_forward = &mut self.lock;
-                            to_forward.fetch_sub(1, Ordering::SeqCst);
-                        }
 
                     }
                     /* try to send more if we have any (non-blocking) */
                     for (slot, buf) in tx_iter {
                         match self.chan.try_recv() {
-                            Ok(pkt) => {
-                                let fwd = Self::send(pkt, slot, buf, &mut self.stats,
-                                                  self.ring_num, self.source_mac, self.destination_mac);
-                                
-                                if fwd {
-                                    let to_forward = &mut self.lock;
-                                    to_forward.fetch_sub(1, Ordering::SeqCst);
-                                }
-                            },
+                            Ok(pkt) => Self::send(pkt, slot, buf, &mut self.stats, &mut self.lock,
+                                                  self.ring_num, self.source_mac, self.destination_mac),
                             Err(TryRecvError::Empty) => break,
                             Err(TryRecvError::Disconnected) => panic!("Expected RX not to die on us"),
                         }
@@ -132,9 +121,8 @@ impl<'a> Sender<'a> {
     }
 
     #[inline]
-    fn send(pkt: OutgoingPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxStats,
-            ring_num: u16, source_mac: MacAddr, destination_mac: MacAddr) -> bool {
-        let mut fwd = false;
+    fn send(pkt: OutgoingPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxStats, lock: &mut Arc<AtomicUsize>,
+            ring_num: u16, source_mac: MacAddr, destination_mac: MacAddr) {
         match pkt {
             OutgoingPacket::Ingress(pkt) => {
                 if let Some(len) = packet::handle_reply(pkt, buf) {
@@ -161,7 +149,8 @@ impl<'a> Sender<'a> {
                 rx_slot.set_len(tx_len);
                 rx_slot.set_flags(netmap::NS_BUF_CHANGED as u16);
 
-                fwd = true;
+                let to_forward = &lock;
+                to_forward.fetch_sub(1, Ordering::SeqCst);
                 
                 let mut buf = unsafe { slice::from_raw_parts_mut::<u8>(buf_ptr as *mut u8, slot.get_len() as usize) };
     /*
@@ -179,6 +168,5 @@ impl<'a> Sender<'a> {
                 stats.sent += 1;
             }
         }
-        fwd
     }
 }
