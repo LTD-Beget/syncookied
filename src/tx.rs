@@ -1,17 +1,17 @@
 use std::mem;
-use std::time;
+use std::time::{self,Duration};
 use std::thread;
 use std::sync::mpsc;
 use std::sync::mpsc::TryRecvError;
-use std::sync::{Arc,Mutex};
-use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
-use ::netmap::{self,NetmapDescriptor,TxSlot,NetmapSlot};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use ::netmap::{self, NetmapDescriptor, TxSlot, NetmapSlot};
 use ::OutgoingPacket;
 use ::packet;
 use ::scheduler;
-use ::scheduler::{CpuSet,Policy};
+use ::scheduler::{CpuSet, Policy};
 use ::pnet::util::MacAddr;
-use ::pnet::packet::ethernet::{EthernetPacket, MutableEthernetPacket, EtherTypes};
+use ::pnet::packet::ethernet::MutableEthernetPacket;
 use ::util;
 
 #[derive(Debug,Default)]
@@ -66,8 +66,8 @@ impl<'a> Sender<'a> {
         scheduler::set_self_policy(Policy::Fifo, 20).expect("setting sched policy failed");
 
         /* wait for card to reinitialize */
-        thread::sleep_ms(1000);
-        println!("TX loop for ring {:?} started", self.ring_num);
+        thread::sleep(Duration::new(1, 0));
+        println!("[TX#{}] started", self.ring_num);
 
         let mut before = time::Instant::now();
         let seconds: usize = 10;

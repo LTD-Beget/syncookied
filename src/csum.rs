@@ -1,7 +1,7 @@
 use std::net::Ipv4Addr;
 
 use pnet::packet::Packet;
-use pnet::packet::ip::{IpNextHeaderProtocol, IpNextHeaderProtocols};
+use pnet::packet::ip::{IpNextHeaderProtocol};
 use pnet::packet::ipv4::Ipv4Packet;
 use pnet::packet::tcp::TcpPacket;
 

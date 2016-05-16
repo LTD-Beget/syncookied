@@ -1,11 +1,11 @@
-use std::net::{IpAddr,Ipv4Addr};
-use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
+use std::sync::atomic::Ordering;
+use std::net::Ipv4Addr;
 
 use pnet::packet::Packet;
 use pnet::packet::ethernet::{EthernetPacket, MutableEthernetPacket, EtherTypes};
 use pnet::packet::ip::{IpNextHeaderProtocol, IpNextHeaderProtocols};
-use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet, self};
-use pnet::packet::tcp::{TcpPacket, MutableTcpPacket, MutableTcpOptionPacket, TcpOptionNumbers, TcpFlags, self};
+use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet};
+use pnet::packet::tcp::{TcpPacket, MutableTcpPacket, MutableTcpOptionPacket, TcpOptionNumbers, TcpFlags};
 use pnet::packet::MutablePacket;
 use pnet::packet::PacketSize;
 use pnet::util::MacAddr;
@@ -66,6 +66,7 @@ impl Default for IngressPacket {
     }
 }
 
+#[allow(dead_code)]
 pub fn dump_input(packet_data: &[u8]) {
     let eth = EthernetPacket::new(packet_data).unwrap();
     println!("{:?}", &eth);
@@ -97,7 +98,7 @@ pub fn handle_input(packet_data: &[u8], mac: MacAddr) -> Action {
 #[inline]
 pub fn handle_reply(pkt: IngressPacket, tx_slice: &mut [u8]) -> Option<usize> {
     let len = tx_slice.len();
-    if len < 78 {
+    if len < MIN_REPLY_BUF_LEN {
         None
     } else {
         Some(build_reply_with_template(&pkt, tx_slice))
@@ -294,8 +295,7 @@ fn build_reply(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
     len
 }
 
-fn handle_tcp_packet(source: IpAddr, destination: IpAddr, packet: &[u8],
-                     pkt: &mut IngressPacket) -> Action {
+fn handle_tcp_packet(packet: &[u8], pkt: &mut IngressPacket) -> Action {
     use std::ptr;
     let tcp = TcpPacket::new(packet);
     if let Some(tcp) = tcp {
@@ -321,11 +321,10 @@ fn handle_tcp_packet(source: IpAddr, destination: IpAddr, packet: &[u8],
     }
 }
 
-fn handle_transport_protocol(source: IpAddr, destination: IpAddr,
-                             protocol: IpNextHeaderProtocol, packet: &[u8],
+fn handle_transport_protocol(protocol: IpNextHeaderProtocol, packet: &[u8],
                              pkt: &mut IngressPacket) -> Action {
     match protocol {
-        IpNextHeaderProtocols::Tcp  => handle_tcp_packet(source, destination, packet, pkt),
+        IpNextHeaderProtocols::Tcp  => handle_tcp_packet(packet, pkt),
         _ => Action::Forward
     }
 }
@@ -335,9 +334,7 @@ fn handle_ipv4_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket) -> Act
     if let Some(header) = header {
         pkt.ipv4_source = header.get_source();
         pkt.ipv4_destination = header.get_destination();
-        handle_transport_protocol(IpAddr::V4(header.get_source()),
-                                  IpAddr::V4(header.get_destination()),
-                                  header.get_next_level_protocol(),
+        handle_transport_protocol(header.get_next_level_protocol(),
                                   header.payload(),
                                   pkt)
     } else {

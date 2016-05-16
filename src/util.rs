@@ -10,7 +10,7 @@ pub fn set_thread_name(name: &str) {
                     .write(true)
                     .create(false)
                     .open(format!("/proc/self/task/{}/comm", tid)).unwrap();
-    file.write_all(name.as_bytes());
+    file.write_all(name.as_bytes()).ok();
 }
 
 pub fn get_cpu_count() -> usize {

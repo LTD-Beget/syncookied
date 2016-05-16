@@ -1,20 +1,17 @@
-use std::mem;
-use std::time;
+use std::time::{self,Duration};
 use std::thread;
 use std::sync::mpsc;
-use std::sync::mpsc::TryRecvError;
-use std::sync::{Arc,Mutex};
-use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
-use ::netmap::{self,NetmapDescriptor,RxSlot,NetmapSlot};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use ::netmap::{self, NetmapDescriptor, RxSlot};
 use ::OutgoingPacket;
 use ::packet;
 use ::scheduler;
-use ::scheduler::{CpuSet,Policy};
+use ::scheduler::{CpuSet, Policy};
 use ::pnet::util::MacAddr;
-use ::pnet::packet::ethernet::{EthernetPacket, MutableEthernetPacket, EtherTypes};
 use ::util;
 use ::libc;
-use ::packet::{Action,IngressPacket};
+use ::packet::Action;
 
 #[derive(Debug,Default)]
 struct RxStats {
@@ -67,7 +64,9 @@ impl<'a> Receiver<'a> {
         scheduler::set_self_affinity(CpuSet::single(self.cpu)).expect("setting affinity failed");
         scheduler::set_self_policy(Policy::Fifo, 20).expect("setting sched policy failed");
 
-        thread::sleep_ms(1000);
+        /* wait for card to reinitialize */
+        thread::sleep(Duration::new(1, 0));
+        println!("[RX#{}] started", self.ring_num);
 
         let mut before = time::Instant::now();
         let seconds: usize = 10;
@@ -95,19 +94,22 @@ impl<'a> Receiver<'a> {
                                     ring_num, slot_ptr, buf_ptr, slot.get_buf_idx());
 */
                                 to_forward.fetch_add(1, Ordering::SeqCst);
-                                self.chan.send(OutgoingPacket::Forwarded((slot_ptr, buf_ptr)));
+                                self.chan.send(OutgoingPacket::Forwarded((slot_ptr, buf_ptr))).unwrap();
                                 stats.forwarded += 1;
                                 fw = true;
                             },
                             Action::Reply(packet) => {
                                 stats.queued += 1;
-                                self.chan.send(OutgoingPacket::Ingress(packet));
+                                self.chan.send(OutgoingPacket::Ingress(packet)).unwrap();
                             },
                         }
                     }
-                    /*if fw {
-                        ring.set_flags(netmap::NR_FORWARD as u32);
-                    }*/
+                    /*
+                     * // forwarding to host ring is not yet implemented
+                     * if fw {
+                     *  ring.set_flags(netmap::NR_FORWARD as u32);
+                     *  }
+                     */
                     if fw {
                         let to_forward = &self.lock;
                         while to_forward.load(Ordering::SeqCst) != 0 {

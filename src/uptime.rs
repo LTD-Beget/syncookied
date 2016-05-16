@@ -1,19 +1,20 @@
-use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
+use std::sync::atomic::Ordering;
+use std::io;
 
 pub trait UptimeReader: Send {
-    fn read(&self) -> Vec<u8>;
+    fn read(&self) -> io::Result<Vec<u8>>;
 }
 
 pub struct LocalReader;
 
 impl UptimeReader for LocalReader {
-    fn read(&self) -> Vec<u8> {
+    fn read(&self) -> io::Result<Vec<u8>> {
         use std::fs::File;
         use std::io::prelude::*;
         let mut file = File::open("/proc/beget_uptime").unwrap();
         let mut buf = vec![];
-        file.read_to_end(&mut buf);
-        buf
+        try!(file.read_to_end(&mut buf));
+        Ok(buf)
     }
 }
 
@@ -30,15 +31,15 @@ impl UdpReader {
 }
 
 impl UptimeReader for UdpReader {
-    fn read(&self) -> Vec<u8> {
+    fn read(&self) -> io::Result<Vec<u8>> {
         use std::net::UdpSocket;
 
         let mut buf = vec![0;1024];
-        let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
+        let socket = try!(UdpSocket::bind("0.0.0.0:0"));
         loop {
-            socket.send_to(b"YO", self.addr.as_str());
-            if let Ok((_,addr)) = socket.recv_from(&mut buf[0..]) {
-                return buf;
+            socket.send_to(b"YO", self.addr.as_str()).unwrap();
+            if let Ok(..) = socket.recv_from(&mut buf[0..]) {
+                return Ok(buf);
             }
         }
     }
@@ -90,13 +91,14 @@ pub fn update(buf: Vec<u8>) {
 
 pub fn run_server(addr: &str) {
     use std::net::UdpSocket;
-    let mut socket = UdpSocket::bind(addr).expect("Cannot bind socket");
+    let socket = UdpSocket::bind(addr).expect("Cannot bind socket");
 
     loop {
         let mut buf = [0; 64];
         if let Ok((_,addr)) = socket.recv_from(&mut buf[0..]) {
-            let buf = LocalReader.read();
-            socket.send_to(&buf[..], addr);
+            if let Ok(buf) = LocalReader.read() {
+                socket.send_to(&buf[..], addr).unwrap();
+            }
         }
     }
 }

@@ -4,7 +4,6 @@ use ::libc;
 use std::mem;
 use std::ptr;
 use std::slice;
-use std::default;
 use std::iter::Iterator;
 use std::ffi::{CStr,CString};
 use self::netmap_sys::netmap;
@@ -23,10 +22,11 @@ pub use self::netmap_sys::netmap::NS_REPORT;
 pub use self::netmap_sys::netmap::NR_FORWARD;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum Direction {
     Input,
     Output,
-    Both
+    InputOutput
 }
 
 #[derive(Debug)]
@@ -134,6 +134,7 @@ pub trait NetmapRing {
 pub struct RxRing(netmap::netmap_ring);
 
 impl RxRing {
+    #[allow(dead_code)]
     #[inline]
     pub fn get_slot_mut<'a,'b>(&'a self) -> &'b mut RxSlot {
         let cur = self.0.cur;
@@ -206,10 +207,9 @@ impl<'a> Drop for RxSlotIter<'a> {
     }
 }
 
-struct RxRingIter<'d> {
-    first: u16,
-    last: u16,
+pub struct RxRingIter<'d> {
     cur: u16,
+    last: u16,
     netmap: &'d NetmapDescriptor,
 }
 
@@ -286,8 +286,7 @@ impl<'a> Iterator for &'a mut TxRing {
     }
 }
 
-struct TxRingIter<'d> {
-    first: u16,
+pub struct TxRingIter<'d> {
     last: u16,
     cur: u16,
     netmap: &'d NetmapDescriptor,
@@ -369,7 +368,6 @@ impl NetmapDescriptor {
         let (first, last) = self.get_rx_rings();
 
         RxRingIter {
-            first: first,
             last: last,
             cur: first,
             netmap: self,
@@ -380,7 +378,6 @@ impl NetmapDescriptor {
         let (first, last) = self.get_tx_rings();
 
         TxRingIter {
-            first: first,
             last: last,
             cur: first,
             netmap: self,
@@ -392,9 +389,9 @@ impl NetmapDescriptor {
 
         /* XXX: check that we opened it with ALL_NIC before */
         let (flag, ring_flag) = match dir {
-            Direction::Input => (0x2000 /* NR_RX_RINGS_ONLY */, netmap::NETMAP_NO_TX_POLL),
-            Direction::Output => (0x4000 /* NR_TX_RINGS_ONLY */, 0),
-            Direction::Both => (0, 0),
+            Direction::Input => (netmap::NR_RX_RINGS_ONLY, netmap::NETMAP_NO_TX_POLL),
+            Direction::Output => (netmap::NR_TX_RINGS_ONLY, 0),
+            Direction::InputOutput => (0, 0),
         };
         nm_desc_raw.req.nr_flags = netmap::NR_REG_ONE_NIC as u32 | flag as u32;
         if ring == self.get_rx_rings_count() { nm_desc_raw.req.nr_flags = netmap::NR_REG_SW as u32 | flag };
@@ -428,6 +425,7 @@ impl NetmapDescriptor {
         unsafe { (*nifp).ni_tx_rings as u16 }
     }
 
+    #[allow(dead_code)]
     pub fn get_flags(&self) -> u32 {
         unsafe { (*self.raw).req.nr_flags }
     }
@@ -444,19 +442,18 @@ impl NetmapDescriptor {
     #[inline]
     fn get_tx_ring(&self, ring: u16) -> &mut TxRing {
         let nifp = unsafe { (*self.raw).nifp };
-        let mut tx_ring: &mut TxRing;
 
-        return unsafe { mem::transmute(netmap_user::NETMAP_TXRING(nifp, ring as isize)) };
+        unsafe { mem::transmute(netmap_user::NETMAP_TXRING(nifp, ring as isize)) }
     }
 
     #[inline]
     fn get_rx_ring(&self, ring: u16) -> &mut RxRing {
         let nifp = unsafe { (*self.raw).nifp };
-        let rx_ring: &mut RxRing;
 
-        return unsafe { mem::transmute(netmap_user::NETMAP_RXRING(nifp, ring as isize)) };
+        unsafe { mem::transmute(netmap_user::NETMAP_RXRING(nifp, ring as isize)) }
     }
 
+    #[allow(dead_code)]
     fn find_free_tx_ring(&self) -> Option<&mut TxRing> {
         let (first, last) = self.get_tx_rings();
 
@@ -469,12 +466,19 @@ impl NetmapDescriptor {
         return None;
     }
 
+    #[allow(dead_code)]
     pub fn get_fd(&self) -> i32 {
         unsafe { (*self.raw).fd }
     }
 
-    pub fn sync(fd: i32) {
+    #[allow(dead_code)]
+    pub fn tx_sync(fd: i32) {
         unsafe { libc::ioctl(fd, netmap::NIOCTXSYNC as u64) };
+    }
+
+    #[allow(dead_code)]
+    pub fn rx_sync(fd: i32) {
+        unsafe { libc::ioctl(fd, netmap::NIOCRXSYNC as u64) };
     }
 
     pub fn poll(&mut self, dir: Direction) -> Option<()> {
@@ -485,7 +489,7 @@ impl NetmapDescriptor {
         pollfd.events = match dir {
             Direction::Input => libc::POLLIN,
             Direction::Output => libc::POLLOUT,
-            Direction::Both => libc::POLLIN | libc::POLLOUT,
+            Direction::InputOutput => libc::POLLIN | libc::POLLOUT,
         };
 
         let rv = unsafe { libc::poll(&mut pollfd, 1, 1000) };

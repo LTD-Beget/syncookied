@@ -6,29 +6,12 @@ extern crate crossbeam;
 extern crate scheduler;
 extern crate clap;
 
-use std::env;
-use std::ptr;
-use std::process;
 use std::thread;
-use std::time;
-use std::mem;
+use std::time::Duration;
 use std::sync::mpsc;
-use std::sync::mpsc::TryRecvError;
-use std::sync::{Arc,Mutex};
+use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT};
 
-use std::net::IpAddr;
-use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
-
-use pnet::packet::Packet;
-use pnet::packet::ethernet::{EthernetPacket, MutableEthernetPacket, EtherTypes};
-use pnet::packet::ip::{IpNextHeaderProtocol, IpNextHeaderProtocols};
-use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet, self};
-use pnet::packet::tcp::{TcpPacket, MutableTcpPacket, MutableTcpOptionPacket, TcpOptionNumbers, self};
-use pnet::packet::MutablePacket;
-use pnet::packet::PacketSize;
 use pnet::util::MacAddr;
-
-use scheduler::{CpuSet,Policy};
 
 use clap::{Arg, App, AppSettings, SubCommand};
 
@@ -42,8 +25,8 @@ mod tx;
 mod rx;
 mod uptime;
 use uptime::UptimeReader;
-use packet::{Action,IngressPacket};
-use netmap::{Direction,NetmapDescriptor,NetmapRing,NetmapSlot,TxSlot,RxSlot};
+use packet::{IngressPacket};
+use netmap::{Direction,NetmapDescriptor};
 
 pub static TCP_TIME_STAMP: AtomicUsize = ATOMIC_USIZE_INIT;
 pub static TCP_COOKIE_TIME: AtomicUsize = ATOMIC_USIZE_INIT;
@@ -77,10 +60,13 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, fwd_mac: MacAddr, uptime
     }
 
     crossbeam::scope(|scope| {
+        let one_sec = Duration::new(1, 0);
         scope.spawn(move|| loop {
-            let buf = uptime_reader.read();
-            uptime::update(buf);
-            thread::sleep_ms(1000);
+            match uptime_reader.read() {
+                Ok(buf) => uptime::update(buf),
+                Err(err) => println!("Failed to read uptime: {:?}", err),
+            }
+            thread::sleep(one_sec);
         });
 
         for ring in 0..rx_count {
