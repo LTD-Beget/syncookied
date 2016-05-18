@@ -364,6 +364,19 @@ impl NetmapDescriptor {
         })
     }
 
+    pub fn new_with_memory(iface: &str, parent: &NetmapDescriptor) -> Result<Self, NetmapError> {
+        let base_nmd: netmap::nmreq = unsafe { mem::zeroed() };
+        let netmap_iface = CString::new(format!("netmap:{}", iface)).unwrap();
+
+        let netmap_desc = unsafe { netmap_user::nm_open(netmap_iface.as_ptr(), &base_nmd, netmap_user::NM_OPEN_NO_MMAP as u64, parent.raw) };
+        if netmap_desc == ptr::null_mut() {
+            return Err(NetmapError::new(format!("Can't open {:?}", netmap_iface)));
+        }
+        Ok(NetmapDescriptor {
+            raw: netmap_desc
+        })
+    }
+
     pub fn rx_iter<'i, 'd: 'i>(&'d mut self) -> RxRingIter<'i> {
         let (first, last) = self.get_rx_rings();
 
