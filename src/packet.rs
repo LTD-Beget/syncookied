@@ -3,6 +3,7 @@ use std::net::Ipv4Addr;
 
 use pnet::packet::Packet;
 use pnet::packet::ethernet::{EthernetPacket, MutableEthernetPacket, EtherTypes};
+use pnet::packet::arp::{MutableArpPacket, ArpOperations, ArpHardwareTypes};
 use pnet::packet::ip::{IpNextHeaderProtocol, IpNextHeaderProtocols};
 use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet};
 use pnet::packet::tcp::{TcpPacket, MutableTcpPacket, MutableTcpOptionPacket, TcpOptionNumbers, TcpFlags};
@@ -359,4 +360,27 @@ fn handle_ether_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket, mac: 
         EtherTypes::Arp => Action::Drop,
         _  => Action::Forward
     }
+}
+
+pub fn handle_arp(source_mac: MacAddr, source_ip: Ipv4Addr, dest_ip: Ipv4Addr, buf: &mut [u8]) -> Option<usize> {
+    let mut ether = MutableEthernetPacket::new(buf).unwrap();
+    let mut len = 0;
+
+    ether.set_source(source_mac);
+    ether.set_destination(MacAddr::new(0xff, 0xff, 0xff, 0xff, 0xff, 0xff));
+    ether.set_ethertype(EtherTypes::Arp);
+    len += ether.packet_size();
+
+    let mut arp = MutableArpPacket::new(ether.payload_mut()).unwrap();
+    arp.set_hardware_type(ArpHardwareTypes::Ethernet);
+    arp.set_protocol_type(EtherTypes::Ipv4);
+    arp.set_hw_addr_len(6);
+    arp.set_proto_addr_len(4);
+    arp.set_operation(ArpOperations::Request);
+    arp.set_sender_hw_addr(source_mac);
+    arp.set_sender_proto_addr(source_ip);
+    arp.set_target_hw_addr(MacAddr::new(0xff, 0xff, 0xff, 0xff, 0xff, 0xff));
+    arp.set_target_proto_addr(dest_ip);
+    len += arp.packet_size();
+    Some(len)
 }

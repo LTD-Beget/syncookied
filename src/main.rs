@@ -10,7 +10,7 @@ use std::thread;
 use std::time::Duration;
 use std::sync::mpsc;
 use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT};
-
+use std::net::Ipv4Addr;
 use pnet::util::MacAddr;
 
 use clap::{Arg, App, AppSettings, SubCommand};
@@ -24,6 +24,7 @@ mod util;
 mod tx;
 mod rx;
 mod uptime;
+mod arp;
 use uptime::UptimeReader;
 use packet::{IngressPacket};
 use netmap::{Direction,NetmapDescriptor};
@@ -41,11 +42,12 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, fwd_mac
     use std::sync::{Mutex,Arc};
 
     let rx_nm = Arc::new(Mutex::new(NetmapDescriptor::new(rx_iface).unwrap()));
-    let tx_nm = if rx_iface == tx_iface {
-         rx_nm.clone()
-     } else {
+    let multi_if = rx_iface != tx_iface;
+    let tx_nm = if multi_if {
          let rx_nm = &*rx_nm.lock().unwrap();
          Arc::new(Mutex::new(NetmapDescriptor::new_with_memory(tx_iface, rx_nm).unwrap()))
+     } else {
+         rx_nm.clone()
     };
     let rx_count = {
         let rx_nm = rx_nm.lock().unwrap();
@@ -76,17 +78,35 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, fwd_mac
             let pair = Arc::new(AtomicUsize::new(0));
             let rx_pair = pair.clone();
 
-            let rx_nm = rx_nm.clone();
+            {
+                let rx_nm = rx_nm.clone();
 
-            scope.spawn(move || {
-                println!("Starting RX thread for ring {} at {}", ring, rx_iface);
-                let mut ring_nm = {
-                    let nm = rx_nm.lock().unwrap();
-                    nm.clone_ring(ring, Direction::Input).unwrap()
-                };
-                let cpu = ring as usize;
-                rx::Receiver::new(ring, cpu, tx, &mut ring_nm, rx_pair, rx_mac.clone()).run();
-            });
+                scope.spawn(move || {
+                    println!("Starting RX thread for ring {} at {}", ring, rx_iface);
+                    let mut ring_nm = {
+                        let nm = rx_nm.lock().unwrap();
+                        nm.clone_ring(ring, Direction::Input).unwrap()
+                    };
+                    let cpu = ring as usize;
+                    rx::Receiver::new(ring, cpu, tx, &mut ring_nm, rx_pair, rx_mac.clone()).run();
+                });
+            }
+
+            /* Start an ARP thread to keep switch from forgetting about us */
+            if multi_if && ring == 0 {
+                    let rx_nm = rx_nm.clone();
+
+                    scope.spawn(move || {
+                    println!("Starting ARP thread for ring {} at {}", ring, rx_iface);
+                    let mut ring_nm = {
+                        let nm = rx_nm.lock().unwrap();
+                        nm.clone_ring(ring, Direction::Output).unwrap()
+                    };
+                    let cpu = ring as usize;
+                    /* XXX: replace hardcoded IPs */
+                    arp::Sender::new(ring, cpu, &mut ring_nm, rx_mac.clone(), Ipv4Addr::new(185,50,25,2), Ipv4Addr::new(185,50,25,1)).run();
+                });
+            }
 
             let tx_nm = tx_nm.clone();
             scope.spawn(move || {
