@@ -72,16 +72,26 @@ impl RoutingTable {
         w.insert(ip, host_conf);
     }
 
-    pub fn with_host_config<F>(ip: Ipv4Addr, mut f: F) where F: FnMut(&HostConfiguration) {
+    pub fn with_host_config<F>(ip: Ipv4Addr, mut f: F) -> Option<()> where F: FnMut(&HostConfiguration) {
         let r = GLOBAL_HOST_CONFIGURATION.read().unwrap();
-        let hc = r.get(&ip).unwrap();
-        f(hc);
+        if let Some(hc) = r.get(&ip) {
+            f(hc);
+            Some(())
+        } else {
+            println!("Config for {} not found", ip);
+            None
+        }
     }
 
-    pub fn with_host_config_mut<F>(ip: Ipv4Addr, mut f: F) where F: FnMut(&mut HostConfiguration) {
+    pub fn with_host_config_mut<F>(ip: Ipv4Addr, mut f: F) -> Option<()> where F: FnMut(&mut HostConfiguration) {
         let mut w = GLOBAL_HOST_CONFIGURATION.write().unwrap();
-        let hc = w.get_mut(&ip).unwrap();
-        f(hc);
+        if let Some(hc) = w.get_mut(&ip) {
+            f(hc);
+            Some(())
+        } else {
+            println!("Config for {} not found", ip);
+            None
+        }
     }
 }
 
