@@ -37,14 +37,15 @@ pub enum OutgoingPacket {
     Forwarded((usize, usize)),
 }
 
-fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, fwd_mac: MacAddr, uptime_reader: Box<UptimeReader>) {
+fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, fwd_mac: MacAddr, uptime_reader: Box<UptimeReader>) {
     use std::sync::{Mutex,Arc};
 
     let rx_nm = Arc::new(Mutex::new(NetmapDescriptor::new(rx_iface).unwrap()));
     let tx_nm = if rx_iface == tx_iface {
          rx_nm.clone()
      } else {
-         Arc::new(Mutex::new(NetmapDescriptor::new(tx_iface).unwrap()))
+         let rx_nm = &*rx_nm.lock().unwrap();
+         Arc::new(Mutex::new(NetmapDescriptor::new_with_memory(tx_iface, rx_nm).unwrap()))
     };
     let rx_count = {
         let rx_nm = rx_nm.lock().unwrap();
@@ -94,8 +95,8 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, fwd_mac: MacAddr, uptime
                     let nm = tx_nm.lock().unwrap();
                     nm.clone_ring(ring, Direction::Output).unwrap()
                 };
-                let cpu = /* rx_count as usize + */ ring as usize; /* HACK */
-                tx::Sender::new(ring, cpu, rx, &mut ring_nm, pair, rx_mac.clone(), fwd_mac).run();
+                let cpu = rx_count as usize + ring as usize; /* HACK */
+                tx::Sender::new(ring, cpu, rx, &mut ring_nm, pair, tx_mac, fwd_mac).run();
             });
         }
 
@@ -155,6 +156,13 @@ fn main() {
                                     .value_name("xx:xx:xx:xx:xx:xx")
                                     .help("Input interface mac address")
                                     .takes_value(true))
+                               .arg(Arg::with_name("out-mac")
+                                    .short("O")
+                                    .required(false)
+                                    .long("output-mac")
+                                    .value_name("xx:xx:xx:xx:xx:xx")
+                                    .help("Output interface mac address")
+                                    .takes_value(true))
                                .arg(Arg::with_name("remote")
                                     .required_unless("local")
                                     .long("remote")
@@ -178,6 +186,7 @@ fn main() {
         let rx_iface = matches.value_of("in").expect("Expected valid input interface");
         let tx_iface = matches.value_of("out").unwrap_or(rx_iface);
         let rx_mac = matches.value_of("in-mac").map(util::parse_mac).expect("Expected valid mac").unwrap();
+        let tx_mac: MacAddr = matches.value_of("out-mac").map(|mac| util::parse_mac(mac).expect("Expected valid mac")).unwrap_or(rx_mac.clone());
         let fwd_mac = matches.value_of("fwd-mac").map(util::parse_mac).expect("Expected valid mac").unwrap();
         let local = matches.is_present("local");
         let ncpus = util::get_cpu_count();
@@ -187,7 +196,7 @@ fn main() {
             let addr = matches.value_of("remote").expect("Expected valid remote addr");
             Box::new(uptime::UdpReader::new(addr.to_owned()))
         };
-        println!("interfaces: [Rx: {}/{}, Tx: {}] Fwd to: {} Cores: {} Local: {}", rx_iface, rx_mac, tx_iface, fwd_mac, ncpus, local);
-        run(&rx_iface, &tx_iface, rx_mac, fwd_mac, uptime_reader);
+        println!("interfaces: [Rx: {}/{}, Tx: {}/{}] Fwd to: {} Cores: {} Local: {}", rx_iface, rx_mac, tx_iface, tx_mac, fwd_mac, ncpus, local);
+        run(&rx_iface, &tx_iface, rx_mac, tx_mac, fwd_mac, uptime_reader);
     }
 }
