@@ -39,6 +39,26 @@ lazy_static! {
     static ref GLOBAL_HOST_CONFIGURATION: RwLock<HashMap<Ipv4Addr, HostConfiguration>> = {
         RwLock::new(HashMap::new())
     };
+
+    static ref REPLY_TEMPLATE: Vec<u8> = {
+        let mut data: Vec<u8> = vec![0;78];
+        /* prepare data common to all packets beforehand */
+        {
+            let pkt = packet::IngressPacket {
+                ether_source: MacAddr::new(0, 0, 0, 0, 0, 0),
+                ether_dest: MacAddr::new(0, 0, 0, 0, 0, 0),
+                ipv4_source: Ipv4Addr::new(127, 0, 0, 1),
+                ipv4_destination: Ipv4Addr::new(127, 0, 0, 1),
+                tcp_source: 0,
+                tcp_destination: 0,
+                tcp_timestamp: [0, 0, 0, 0],
+                tcp_sequence: 0,
+                tcp_mss: 1460,
+            };
+            packet::build_reply(&pkt, &mut data);
+        }
+        data
+    };
 }
 
 pub struct RoutingTable;

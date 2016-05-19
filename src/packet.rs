@@ -14,28 +14,6 @@ use pnet::util::MacAddr;
 use ::cookie;
 use ::csum;
 
-lazy_static! {
-    static ref REPLY_TEMPLATE: Vec<u8> = {
-        let mut data: Vec<u8> = vec![0;78];
-        /* prepare data common to all packets beforehand */
-        {
-            let pkt = IngressPacket {
-                ether_source: MacAddr::new(0, 0, 0, 0, 0, 0),
-                ether_dest: MacAddr::new(0, 0, 0, 0, 0, 0),
-                ipv4_source: Ipv4Addr::new(127, 0, 0, 1),
-                ipv4_destination: Ipv4Addr::new(127, 0, 0, 1),
-                tcp_source: 0,
-                tcp_destination: 0,
-                tcp_timestamp: [0, 0, 0, 0],
-                tcp_sequence: 0,
-                tcp_mss: 1460,
-            };
-            build_reply(&pkt, &mut data);
-        }
-        data
-    };
-}
-
 pub const MIN_REPLY_BUF_LEN: usize = 78;
 
 #[allow(dead_code)]
@@ -191,12 +169,12 @@ fn build_reply_fast(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
 fn build_reply_with_template(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
     use std::ptr;
     unsafe {
-        ptr::copy_nonoverlapping::<u8>(REPLY_TEMPLATE.as_ptr(), reply.as_mut_ptr(), 78);
+        ptr::copy_nonoverlapping::<u8>(::REPLY_TEMPLATE.as_ptr(), reply.as_mut_ptr(), 78);
     }
     build_reply_fast(pkt, reply)
 }
 
-fn build_reply(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
+pub fn build_reply(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
     let mut len = 0;
     let ether_len;
     /* build ethernet packet */
