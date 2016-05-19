@@ -15,7 +15,7 @@ fn cookie_hash(source_addr: u32, dest_addr: u32, source_port: u16, dest_port: u1
     let mut tmp: [u32; 16 + 5 + SHA_WORKSPACE_WORDS] = unsafe { mem::zeroed() };
 
     unsafe {
-        ::RoutingTable::with_host_config(Ipv4Addr::from(dest_addr) /* to_be? */, |hc| {
+        ::RoutingTable::with_host_config(Ipv4Addr::from(dest_addr.to_be()) /* to_be? */, |hc| {
                 ptr::copy_nonoverlapping(hc.syncookie_secret[c as usize].as_ptr(), tmp.as_mut_ptr().offset(4), 17);
         });
     }
