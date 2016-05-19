@@ -5,12 +5,16 @@ extern crate pnet;
 extern crate crossbeam;
 extern crate scheduler;
 extern crate clap;
+extern crate yaml_rust;
 
 use std::thread;
 use std::time::Duration;
 use std::sync::mpsc;
+use std::sync::RwLock;
 use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT};
+use std::collections::HashMap;
 use std::net::Ipv4Addr;
+use std::str::FromStr;
 use pnet::util::MacAddr;
 
 use clap::{Arg, App, AppSettings, SubCommand};
@@ -25,13 +29,60 @@ mod tx;
 mod rx;
 mod uptime;
 mod arp;
+mod config;
 use uptime::UptimeReader;
 use packet::{IngressPacket};
 use netmap::{Direction,NetmapDescriptor};
 
-pub static TCP_TIME_STAMP: AtomicUsize = ATOMIC_USIZE_INIT;
-pub static TCP_COOKIE_TIME: AtomicUsize = ATOMIC_USIZE_INIT;
-pub static mut syncookie_secret: [[u32;17];2] = [[0;17];2];
+lazy_static! {
+    /* maps public IP to tcp parameters */
+    static ref GLOBAL_HOST_CONFIGURATION: RwLock<HashMap<Ipv4Addr, HostConfiguration>> = {
+        RwLock::new(HashMap::new())
+    };
+}
+
+pub struct RoutingTable;
+
+impl RoutingTable {
+    fn add_host(ip: Ipv4Addr, mac: MacAddr) {
+        println!("Configuration: {} -> {}", ip, mac);
+        let host_conf = HostConfiguration::new(mac);
+        let mut w = GLOBAL_HOST_CONFIGURATION.write().unwrap();
+
+        w.insert(ip, host_conf);
+    }
+
+    pub fn with_host_config<F>(ip: Ipv4Addr, mut f: F) where F: FnMut(&HostConfiguration) {
+        let r = GLOBAL_HOST_CONFIGURATION.read().unwrap();
+        let hc = r.get(&ip).unwrap();
+        f(hc);
+    }
+
+    pub fn with_host_config_mut<F>(ip: Ipv4Addr, mut f: F) where F: FnMut(&mut HostConfiguration) {
+        let mut w = GLOBAL_HOST_CONFIGURATION.write().unwrap();
+        let hc = w.get_mut(&ip).unwrap();
+        f(hc);
+    }
+}
+
+#[derive(Debug)]
+pub struct HostConfiguration {
+    mac: MacAddr,
+    tcp_timestamp: u64,
+    tcp_cookie_time: u64,
+    syncookie_secret: [[u32;17];2] 
+}
+
+impl HostConfiguration {
+    fn new(mac: MacAddr) -> Self {
+        HostConfiguration {
+            mac: mac,
+            tcp_timestamp: 0,
+            tcp_cookie_time: 0,
+            syncookie_secret: [[0;17];2],
+        }
+    }
+}
 
 pub enum OutgoingPacket {
     Ingress(IngressPacket),
@@ -66,7 +117,7 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, fwd_mac
         let one_sec = Duration::new(1, 0);
         scope.spawn(move|| loop {
             match uptime_reader.read() {
-                Ok(buf) => uptime::update(buf),
+                Ok(buf) => uptime::update(Ipv4Addr::new(185,50,25,2), buf),
                 Err(err) => println!("Failed to read uptime: {:?}", err),
             }
             thread::sleep(one_sec);
@@ -210,6 +261,11 @@ fn main() {
         let fwd_mac = matches.value_of("fwd-mac").map(util::parse_mac).expect("Expected valid mac").unwrap();
         let local = matches.is_present("local");
         let ncpus = util::get_cpu_count();
+
+        let ip = Ipv4Addr::from_str("185.50.25.2").unwrap();
+        RoutingTable::add_host(ip, fwd_mac);
+        RoutingTable::with_host_config(ip, |hc| println!("{:?}", hc));
+
         let uptime_reader: Box<UptimeReader> = if local {
             Box::new(uptime::LocalReader)
         } else {

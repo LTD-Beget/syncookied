@@ -10,6 +10,7 @@ crossbeam = "0.2.5"
 scheduler = "0.1.1"
 clap = "2.4.0"
 lazy_static = "0.2.1"
+yaml-rust = "0.3.2"
 
 [dependencies.netmap_sys]
 git = "https://github.com/libpnet/netmap_sys"

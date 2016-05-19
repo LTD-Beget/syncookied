@@ -133,7 +133,9 @@ fn build_reply_fast(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
     {
         use std::ptr;
         /* build tcp packet */
-        let cookie_time = ::TCP_COOKIE_TIME.load(Ordering::Relaxed);
+        let mut cookie_time = 0;
+        ::RoutingTable::with_host_config(pkt.ipv4_destination, |hc| cookie_time = hc.tcp_cookie_time);
+
         let (seq_num, mss_val) = cookie::generate_cookie_init_sequence(
             pkt.ipv4_source, pkt.ipv4_destination,
             pkt.tcp_source, pkt.tcp_destination, pkt.tcp_sequence,
@@ -148,7 +150,8 @@ fn build_reply_fast(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
         {
             let options = tcp.get_options_raw_mut();
             { /* Timestamp */
-                let my_tcp_time = ::TCP_TIME_STAMP.load(Ordering::Relaxed) as u32;
+                let mut my_tcp_time = 0;
+                ::RoutingTable::with_host_config(pkt.ipv4_destination, |hc| my_tcp_time = hc.tcp_timestamp as u32);
                 /*
                 let in_options = tcp_in.get_options_iter();
                 let mut their_time = &mut [0, 0, 0, 0][..];
@@ -223,7 +226,8 @@ fn build_reply(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
     {
         use std::ptr;
         /* build tcp packet */
-        let cookie_time = ::TCP_COOKIE_TIME.load(Ordering::Relaxed);
+        let mut cookie_time = 0;
+        ::RoutingTable::with_host_config(pkt.ipv4_destination, |hc| cookie_time = hc.tcp_cookie_time);
         let (seq_num, mss_val) = cookie::generate_cookie_init_sequence(
             pkt.ipv4_source, pkt.ipv4_destination,
             pkt.tcp_source, pkt.tcp_destination, pkt.tcp_sequence,
@@ -253,7 +257,8 @@ fn build_reply(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
                 sack.get_length_raw_mut()[0] = 2;
             }
             { /* Timestamp */
-                let my_tcp_time = ::TCP_TIME_STAMP.load(Ordering::Relaxed) as u32;
+                let mut my_tcp_time = 0;
+                ::RoutingTable::with_host_config(pkt.ipv4_destination, |hc| my_tcp_time = hc.tcp_timestamp as u32);
                 /*
                 let in_options = tcp_in.get_options_iter();
                 let mut their_time = &mut [0, 0, 0, 0][..];

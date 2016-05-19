@@ -1,5 +1,6 @@
 use std::sync::atomic::Ordering;
 use std::io;
+use std::net::Ipv4Addr;
 
 pub trait UptimeReader: Send {
     fn read(&self) -> io::Result<Vec<u8>>;
@@ -45,12 +46,13 @@ impl UptimeReader for UdpReader {
     }
 }
 
-pub fn update(buf: Vec<u8>) {
+pub fn update(ip: Ipv4Addr, buf: Vec<u8>) {
     use std::io::prelude::*;
     use std::io::BufReader;
 
     let mut jiffies = 0;
     let mut tcp_cookie_time = 0;
+    let mut syncookie_secret: [[u32;17];2] = [[0;17];2];
 
     let reader = BufReader::new(&buf[..]);
     for (idx, line) in reader.lines().enumerate() {
@@ -70,7 +72,7 @@ pub fn update(buf: Vec<u8>) {
                     if word == "" {
                         continue;
                     }
-                    unsafe { ::syncookie_secret[0][idx] = u32::from_str_radix(word, 16).unwrap() };
+                    syncookie_secret[0][idx] = u32::from_str_radix(word, 16).unwrap();
                 }
             },
             2 => {
@@ -78,15 +80,22 @@ pub fn update(buf: Vec<u8>) {
                     if word == "" {
                         continue;
                     }
-                    unsafe { ::syncookie_secret[1][idx] = u32::from_str_radix(word, 16).unwrap() };
+                    syncookie_secret[1][idx] = u32::from_str_radix(word, 16).unwrap();
                 }
             },
             _ => {},
         }
     }
     //println!("jiffies: {}, tcp_cookie_time: {}, syncookie_secret: {:?}", jiffies, tcp_cookie_time, unsafe { syncookie_secret });
-    ::TCP_TIME_STAMP.store(jiffies as usize & 0xffffffff, Ordering::SeqCst);
-    ::TCP_COOKIE_TIME.store(tcp_cookie_time as usize, Ordering::SeqCst);
+    ::RoutingTable::with_host_config_mut(ip, |hc| {
+        use std::ptr;
+        hc.tcp_timestamp = jiffies & 0xffffffff;
+        hc.tcp_cookie_time = tcp_cookie_time as u64;
+        unsafe {
+            ptr::copy_nonoverlapping(syncookie_secret[0].as_ptr(), hc.syncookie_secret[0 as usize].as_mut_ptr(), 17);
+            ptr::copy_nonoverlapping(syncookie_secret[1].as_ptr(), hc.syncookie_secret[1 as usize].as_mut_ptr(), 17);
+        }
+    });
 }
 
 pub fn run_server(addr: &str) {
