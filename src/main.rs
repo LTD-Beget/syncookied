@@ -19,10 +19,7 @@ use std::str::FromStr;
 use pnet::util::MacAddr;
 use parking_lot::RwLock;
 
-use std::collections::HashMap;
-use std::hash::BuildHasherDefault;
-use std::hash::BuildHasher;
-use fnv::FnvHasher;
+use std::collections::BTreeMap;
 
 use clap::{Arg, App, AppSettings, SubCommand};
 
@@ -43,9 +40,8 @@ use netmap::{Direction,NetmapDescriptor};
 
 lazy_static! {
     /* maps public IP to tcp parameters */
-    static ref GLOBAL_HOST_CONFIGURATION: RwLock<HashMap<Ipv4Addr, HostConfiguration, BuildHasherDefault<fnv::FnvHasher>>> = {
-        let fnv = BuildHasherDefault::<FnvHasher>::default();
-        let hm = HashMap::with_hasher(fnv);
+    static ref GLOBAL_HOST_CONFIGURATION: RwLock<BTreeMap<Ipv4Addr, HostConfiguration>> = {
+        let hm = BTreeMap::new();
         RwLock::new(hm)
     };
 
@@ -70,9 +66,8 @@ lazy_static! {
     };
 }
 
-thread_local!(pub static LOCAL_ROUTING_TABLE: RefCell<HashMap<Ipv4Addr, HostConfiguration, BuildHasherDefault<fnv::FnvHasher>>> = {
-    let fnv = BuildHasherDefault::<FnvHasher>::default();
-    let hm = HashMap::with_hasher(fnv);
+thread_local!(pub static LOCAL_ROUTING_TABLE: RefCell<BTreeMap<Ipv4Addr, HostConfiguration>> = {
+    let hm = BTreeMap::new();
     RefCell::new(hm)
 });
 
