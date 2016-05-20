@@ -310,9 +310,7 @@ fn main() {
         let local = matches.is_present("local");
         let ncpus = util::get_cpu_count();
 
-        let ip = Ipv4Addr::from_str("185.50.25.2").unwrap();
-        RoutingTable::add_host(ip, fwd_mac);
-        RoutingTable::with_host_config(ip, |hc| println!("{:?}", hc));
+        config::configure();
 
         let uptime_reader: Box<UptimeReader> = if local {
             Box::new(uptime::LocalReader)

@@ -76,6 +76,7 @@ pub fn generate_cookie_init_sequence(source_addr: Ipv4Addr, dest_addr: Ipv4Addr,
     (cookie, mssval)
 }
 
+/*
 #[test]
 fn test_cookie_init() {
     ::read_uptime();
@@ -88,6 +89,7 @@ fn test_cookie_init() {
     let mss = 1460;
     println!("COOKIE: {:?}", generate_cookie_init_sequence(source_addr, dest_addr, source_port, dest_port, seq.to_be(), mss, tcp_cookie_time));
 }
+*/
 
 #[inline]
 pub fn synproxy_init_timestamp_cookie(wscale: u8, sperm: u8, ecn: u8, tcp_time_stamp: u32) -> u32 {
