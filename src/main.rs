@@ -6,16 +6,17 @@ extern crate crossbeam;
 extern crate scheduler;
 extern crate clap;
 extern crate yaml_rust;
+extern crate parking_lot;
 
 use std::thread;
 use std::time::Duration;
 use std::sync::mpsc;
-use std::sync::RwLock;
 use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT};
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::str::FromStr;
 use pnet::util::MacAddr;
+use parking_lot::RwLock;
 
 use clap::{Arg, App, AppSettings, SubCommand};
 
@@ -67,13 +68,13 @@ impl RoutingTable {
     fn add_host(ip: Ipv4Addr, mac: MacAddr) {
         println!("Configuration: {} -> {}", ip, mac);
         let host_conf = HostConfiguration::new(mac);
-        let mut w = GLOBAL_HOST_CONFIGURATION.write().unwrap();
+        let mut w = GLOBAL_HOST_CONFIGURATION.write();
 
         w.insert(ip, host_conf);
     }
 
     pub fn with_host_config<F>(ip: Ipv4Addr, mut f: F) -> Option<()> where F: FnMut(&HostConfiguration) {
-        let r = GLOBAL_HOST_CONFIGURATION.read().unwrap();
+        let r = GLOBAL_HOST_CONFIGURATION.read();
         if let Some(hc) = r.get(&ip) {
             f(hc);
             Some(())
@@ -84,7 +85,7 @@ impl RoutingTable {
     }
 
     pub fn with_host_config_mut<F>(ip: Ipv4Addr, mut f: F) -> Option<()> where F: FnMut(&mut HostConfiguration) {
-        let mut w = GLOBAL_HOST_CONFIGURATION.write().unwrap();
+        let mut w = GLOBAL_HOST_CONFIGURATION.write();
         if let Some(hc) = w.get_mut(&ip) {
             f(hc);
             Some(())
