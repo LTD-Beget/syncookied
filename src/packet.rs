@@ -189,7 +189,8 @@ fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) 
 fn build_reply_with_template(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> usize {
     use std::ptr;
     unsafe {
-        ptr::copy_nonoverlapping::<u8>(REPLY_TEMPLATE.as_ptr(), reply.as_mut_ptr(), 78);
+        ptr::copy_nonoverlapping::<u8>(REPLY_TEMPLATE.as_ptr().offset(12 /* ether src/dst */),
+                                       reply.as_mut_ptr().offset(12), MIN_REPLY_BUF_LEN - 12);
     }
     build_reply_fast(pkt, source_mac, reply)
 }
