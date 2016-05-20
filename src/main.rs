@@ -7,16 +7,21 @@ extern crate scheduler;
 extern crate clap;
 extern crate yaml_rust;
 extern crate parking_lot;
+extern crate fnv;
 
 use std::thread;
 use std::time::Duration;
 use std::sync::mpsc;
 use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT};
-use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::str::FromStr;
 use pnet::util::MacAddr;
 use parking_lot::RwLock;
+
+use std::collections::HashMap;
+use std::hash::BuildHasherDefault;
+use std::hash::BuildHasher;
+use fnv::FnvHasher;
 
 use clap::{Arg, App, AppSettings, SubCommand};
 
@@ -37,8 +42,10 @@ use netmap::{Direction,NetmapDescriptor};
 
 lazy_static! {
     /* maps public IP to tcp parameters */
-    static ref GLOBAL_HOST_CONFIGURATION: RwLock<HashMap<Ipv4Addr, HostConfiguration>> = {
-        RwLock::new(HashMap::new())
+    static ref GLOBAL_HOST_CONFIGURATION: RwLock<HashMap<Ipv4Addr, HostConfiguration, BuildHasherDefault<fnv::FnvHasher>>> = {
+        let fnv = BuildHasherDefault::<FnvHasher>::default();
+        let hm = HashMap::with_hasher(fnv);
+        RwLock::new(hm)
     };
 
     static ref REPLY_TEMPLATE: Vec<u8> = {
