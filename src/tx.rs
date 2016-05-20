@@ -4,22 +4,15 @@ use std::thread;
 use ::mpsc;
 use ::mpsc::TryRecvError;
 use std::sync::Arc;
-use std::net::Ipv4Addr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use ::netmap::{self, NetmapDescriptor, TxSlot, NetmapSlot};
-use ::{OutgoingPacket,HostConfiguration};
+use ::OutgoingPacket;
 use ::packet;
 use ::scheduler;
 use ::scheduler::{CpuSet, Policy};
 use ::pnet::util::MacAddr;
 use ::pnet::packet::ethernet::MutableEthernetPacket;
 use ::util;
-use ::fnv;
-
-use std::collections::HashMap;
-use std::hash::BuildHasherDefault;
-use std::hash::BuildHasher;
-use fnv::FnvHasher;
 
 #[derive(Debug,Default)]
 struct TxStats {

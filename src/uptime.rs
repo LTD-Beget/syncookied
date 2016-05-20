@@ -1,4 +1,3 @@
-use std::sync::atomic::Ordering;
 use std::io;
 use std::net::Ipv4Addr;
 
