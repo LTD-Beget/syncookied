@@ -37,14 +37,13 @@ pub struct Sender<'a> {
     netmap: &'a mut NetmapDescriptor,
     lock: Arc<AtomicUsize>,
     source_mac: MacAddr,
-    destination_mac: MacAddr,
     stats: TxStats,
 }
 
 impl<'a> Sender<'a> {
     pub fn new(ring_num: u16, cpu: usize, chan: mpsc::Receiver<OutgoingPacket>,
             netmap: &'a mut NetmapDescriptor, lock: Arc<AtomicUsize>,
-            source_mac: MacAddr, destination_mac: MacAddr) -> Sender<'a> {
+            source_mac: MacAddr) -> Sender<'a> {
         Sender {
             ring_num: ring_num,
             cpu: cpu,
@@ -52,7 +51,6 @@ impl<'a> Sender<'a> {
             netmap: netmap,
             lock: lock,
             source_mac: source_mac,
-            destination_mac: destination_mac,
             stats: TxStats::empty(),
         }
     }
@@ -87,14 +85,14 @@ impl<'a> Sender<'a> {
                     if let Some((slot, buf)) = tx_iter.next() {
                         let pkt = self.chan.recv().expect("Expected RX not to die on us");
                         Self::send(pkt, slot, buf, &mut self.stats, &mut self.lock,
-                                   self.ring_num, self.source_mac, self.destination_mac);
+                                   self.ring_num, self.source_mac);
 
                     }
                     /* try to send more if we have any (non-blocking) */
                     for (slot, buf) in tx_iter {
                         match self.chan.try_recv() {
                             Ok(pkt) => Self::send(pkt, slot, buf, &mut self.stats, &mut self.lock,
-                                                  self.ring_num, self.source_mac, self.destination_mac),
+                                                  self.ring_num, self.source_mac),
                             Err(TryRecvError::Empty) => break,
                             Err(TryRecvError::Disconnected) => panic!("Expected RX not to die on us"),
                         }
@@ -128,8 +126,8 @@ impl<'a> Sender<'a> {
     }
 
     #[inline]
-    fn send(pkt: OutgoingPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxStats, lock: &mut Arc<AtomicUsize>,
-            ring_num: u16, source_mac: MacAddr, destination_mac: MacAddr) {
+    fn send(pkt: OutgoingPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxStats,
+            lock: &mut Arc<AtomicUsize>, ring_num: u16, source_mac: MacAddr) {
         match pkt {
             OutgoingPacket::Ingress(pkt) => {
                 if let Some(len) = packet::handle_reply(pkt, source_mac, buf) {
@@ -141,7 +139,7 @@ impl<'a> Sender<'a> {
                     stats.failed += 1;
                 }
             },
-            OutgoingPacket::Forwarded((slot_ptr, buf_ptr)) => {
+            OutgoingPacket::Forwarded((slot_ptr, buf_ptr, destination_mac)) => {
                 use std::slice;
                 /* swap buffers (zero copy) */
                 let rx_slot: &mut TxSlot = unsafe { mem::transmute(slot_ptr as *mut TxSlot) };

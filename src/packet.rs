@@ -40,7 +40,7 @@ lazy_static! {
 #[derive(Debug)]
 pub enum Action {
     Drop,
-    Forward,
+    Forward(MacAddr),
     Reply(IngressPacket)
 }
 
@@ -299,7 +299,7 @@ pub fn build_reply(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -
     len
 }
 
-fn handle_tcp_packet(packet: &[u8], pkt: &mut IngressPacket) -> Action {
+fn handle_tcp_packet(packet: &[u8], fwd_mac: MacAddr, pkt: &mut IngressPacket) -> Action {
     use std::ptr;
     let tcp = TcpPacket::new(packet);
     if let Some(tcp) = tcp {
@@ -318,7 +318,7 @@ fn handle_tcp_packet(packet: &[u8], pkt: &mut IngressPacket) -> Action {
             pkt.tcp_mss = 1460; /* HACK */
             return Action::Reply(IngressPacket::default());
         }
-        Action::Forward
+        Action::Forward(fwd_mac)
     } else {
         println!("Malformed TCP Packet");
         Action::Drop
@@ -326,10 +326,11 @@ fn handle_tcp_packet(packet: &[u8], pkt: &mut IngressPacket) -> Action {
 }
 
 fn handle_transport_protocol(protocol: IpNextHeaderProtocol, packet: &[u8],
+                             fwd_mac: MacAddr,
                              pkt: &mut IngressPacket) -> Action {
     match protocol {
-        IpNextHeaderProtocols::Tcp  => handle_tcp_packet(packet, pkt),
-        _ => Action::Forward
+        IpNextHeaderProtocols::Tcp  => handle_tcp_packet(packet, fwd_mac, pkt),
+        _ => Action::Forward(fwd_mac),
     }
 }
 
@@ -338,8 +339,13 @@ fn handle_ipv4_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket) -> Act
     if let Some(header) = header {
         pkt.ipv4_source = header.get_source();
         pkt.ipv4_destination = header.get_destination();
+        let mut fwd_mac = MacAddr::new(0xff, 0xff, 0xff, 0xff, 0xff, 0xff);
+        ::RoutingTable::with_host_config(pkt.ipv4_destination, |hc| {
+            fwd_mac = hc.mac;
+        });
         handle_transport_protocol(header.get_next_level_protocol(),
                                   header.payload(),
+                                  fwd_mac,
                                   pkt)
     } else {
         println!("Malformed IPv4 Packet");
@@ -359,8 +365,7 @@ fn handle_ether_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket, mac: 
             pkt.ether_source = ethernet.get_source();
             handle_ipv4_packet(ethernet, pkt)
         },
-        EtherTypes::Arp => Action::Drop,
-        _  => Action::Forward
+        _  => Action::Drop,
     }
 }
 

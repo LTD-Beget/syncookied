@@ -134,10 +134,10 @@ impl HostConfiguration {
 
 pub enum OutgoingPacket {
     Ingress(IngressPacket),
-    Forwarded((usize, usize)),
+    Forwarded((usize, usize, MacAddr)),
 }
 
-fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, fwd_mac: MacAddr, uptime_reader: Box<UptimeReader>) {
+fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, uptime_readers: Vec<Box<UptimeReader>>) {
     use std::sync::{Mutex,Arc};
 
     let rx_nm = Arc::new(Mutex::new(NetmapDescriptor::new(rx_iface).unwrap()));
@@ -163,13 +163,15 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, fwd_mac
 
     crossbeam::scope(|scope| {
         let one_sec = Duration::new(1, 0);
-        scope.spawn(move|| loop {
-            match uptime_reader.read() {
-                Ok(buf) => uptime::update(Ipv4Addr::new(185,50,25,2), buf),
-                Err(err) => println!("Failed to read uptime: {:?}", err),
-            }
-            thread::sleep(one_sec);
-        });
+        for uptime_reader in uptime_readers.into_iter() {
+            scope.spawn(move|| loop {
+                match uptime_reader.read() {
+                    Ok(buf) => uptime::update(Ipv4Addr::new(185,50,25,2), buf),
+                    Err(err) => println!("Failed to read uptime: {:?}", err),
+                }
+                thread::sleep(one_sec);
+            });
+        }
 
         for ring in 0..rx_count {
             let ring = ring;
@@ -215,7 +217,7 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, fwd_mac
                     nm.clone_ring(ring, Direction::Output).unwrap()
                 };
                 let cpu = rx_count as usize + ring as usize; /* HACK */
-                tx::Sender::new(ring, cpu, rx, &mut ring_nm, pair, tx_mac, fwd_mac).run();
+                tx::Sender::new(ring, cpu, rx, &mut ring_nm, pair, tx_mac).run();
             });
         }
 
@@ -282,19 +284,6 @@ fn main() {
                                     .value_name("xx:xx:xx:xx:xx:xx")
                                     .help("Output interface mac address")
                                     .takes_value(true))
-                               .arg(Arg::with_name("remote")
-                                    .required_unless("local")
-                                    .long("remote")
-                                    .value_name("ip:port")
-                                    .help("ip:port to get uptime from")
-                                    .takes_value(true))
-                               .arg(Arg::with_name("fwd-mac")
-                                    .short("F")
-                                    .required(true)
-                                    .long("forward-to")
-                                    .value_name("xx:xx:xx:xx:xx:xx")
-                                    .help("Mac address we forward to")
-                                    .takes_value(true))
                                .get_matches();
 
     if let Some(matches) = matches.subcommand_matches("server") {
@@ -306,19 +295,18 @@ fn main() {
         let tx_iface = matches.value_of("out").unwrap_or(rx_iface);
         let rx_mac = matches.value_of("in-mac").map(util::parse_mac).expect("Expected valid mac").unwrap();
         let tx_mac: MacAddr = matches.value_of("out-mac").map(|mac| util::parse_mac(mac).expect("Expected valid mac")).unwrap_or(rx_mac.clone());
-        let fwd_mac = matches.value_of("fwd-mac").map(util::parse_mac).expect("Expected valid mac").unwrap();
         let local = matches.is_present("local");
         let ncpus = util::get_cpu_count();
 
-        config::configure();
-
-        let uptime_reader: Box<UptimeReader> = if local {
-            Box::new(uptime::LocalReader)
+        let uptime_readers = if !local {
+            config::configure().iter().map(|addr| 
+                Box::new(uptime::UdpReader::new(addr.to_owned())) as Box<UptimeReader>
+            ).collect()
         } else {
-            let addr = matches.value_of("remote").expect("Expected valid remote addr");
-            Box::new(uptime::UdpReader::new(addr.to_owned()))
+            vec![Box::new(uptime::LocalReader) as Box<UptimeReader>]
         };
-        println!("interfaces: [Rx: {}/{}, Tx: {}/{}] Fwd to: {} Cores: {} Local: {}", rx_iface, rx_mac, tx_iface, tx_mac, fwd_mac, ncpus, local);
-        run(&rx_iface, &tx_iface, rx_mac, tx_mac, fwd_mac, uptime_reader);
+
+        println!("interfaces: [Rx: {}/{}, Tx: {}/{}] Cores: {} Local: {}", rx_iface, rx_mac, tx_iface, tx_mac, ncpus, local);
+        run(&rx_iface, &tx_iface, rx_mac, tx_mac, uptime_readers);
     }
 }

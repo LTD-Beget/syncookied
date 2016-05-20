@@ -83,7 +83,7 @@ impl<'a> Receiver<'a> {
                             Action::Drop => {
                                 stats.dropped += 1;
                             },
-                            Action::Forward => {
+                            Action::Forward(fwd_mac) => {
                                 let to_forward = &self.lock;
 
                                 let slot_ptr: usize = slot as *mut RxSlot as usize;
@@ -94,7 +94,7 @@ impl<'a> Receiver<'a> {
                                     ring_num, slot_ptr, buf_ptr, slot.get_buf_idx());
 */
                                 to_forward.fetch_add(1, Ordering::SeqCst);
-                                self.chan.send(OutgoingPacket::Forwarded((slot_ptr, buf_ptr))).unwrap();
+                                self.chan.send(OutgoingPacket::Forwarded((slot_ptr, buf_ptr, fwd_mac))).unwrap();
                                 stats.forwarded += 1;
                                 fw = true;
                             },
