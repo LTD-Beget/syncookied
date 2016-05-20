@@ -54,7 +54,7 @@ pub struct IngressPacket {
     pub tcp_destination: u16,
     pub tcp_timestamp: [u8;4],
     pub tcp_sequence: u32,
-    pub tcp_mss: u32
+    pub tcp_mss: u16
 }
 
 impl Default for IngressPacket {
@@ -137,7 +137,7 @@ fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) 
         let (seq_num, mss_val) = cookie::generate_cookie_init_sequence(
             pkt.ipv4_source, pkt.ipv4_destination,
             pkt.tcp_source, pkt.tcp_destination, pkt.tcp_sequence,
-            1460 /* FIXME */, cookie_time as u32);
+            pkt.tcp_mss, cookie_time as u32);
         let mut tcp = MutableTcpPacket::new(&mut ip.payload_mut()[0..20 + 24]).unwrap();
         tcp.set_source(pkt.tcp_destination);
         tcp.set_destination(pkt.tcp_source);
@@ -229,7 +229,7 @@ pub fn build_reply(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -
         let (seq_num, mss_val) = cookie::generate_cookie_init_sequence(
             pkt.ipv4_source, pkt.ipv4_destination,
             pkt.tcp_source, pkt.tcp_destination, pkt.tcp_sequence,
-            1460 /* FIXME */, cookie_time as u32);
+            pkt.tcp_mss, cookie_time as u32);
         let mut tcp = MutableTcpPacket::new(&mut ip.payload_mut()[0..20 + 24]).unwrap();
         tcp.set_source(pkt.tcp_destination);
         tcp.set_destination(pkt.tcp_source);
