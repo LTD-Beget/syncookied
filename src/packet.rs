@@ -16,6 +16,27 @@ use ::csum;
 
 pub const MIN_REPLY_BUF_LEN: usize = 78;
 
+lazy_static! {
+    static ref REPLY_TEMPLATE: Vec<u8> = {
+        let mut data: Vec<u8> = vec![0;78];
+        /* prepare data common to all packets beforehand */
+        {
+            let pkt = IngressPacket {
+                ether_source: MacAddr::new(0, 0, 0, 0, 0, 0),
+                ipv4_source: Ipv4Addr::new(127, 0, 0, 1),
+                ipv4_destination: Ipv4Addr::new(127, 0, 0, 1),
+                tcp_source: 0,
+                tcp_destination: 0,
+                tcp_timestamp: [0, 0, 0, 0],
+                tcp_sequence: 0,
+                tcp_mss: 1460,
+            };
+            build_reply(&pkt, MacAddr::new(0, 0, 0, 0, 0, 0), &mut data);
+        }
+        data
+    };
+}
+
 #[allow(dead_code)]
 #[derive(Debug)]
 pub enum Action {
@@ -27,7 +48,6 @@ pub enum Action {
 #[derive(Debug)]
 pub struct IngressPacket {
     pub ether_source: MacAddr,
-    pub ether_dest: MacAddr,
     pub ipv4_source: Ipv4Addr,
     pub ipv4_destination: Ipv4Addr,
     pub tcp_source: u16,
@@ -75,12 +95,12 @@ pub fn handle_input(packet_data: &[u8], mac: MacAddr) -> Action {
 }
 
 #[inline]
-pub fn handle_reply(pkt: IngressPacket, tx_slice: &mut [u8]) -> Option<usize> {
+pub fn handle_reply(pkt: IngressPacket, source_mac: MacAddr, tx_slice: &mut [u8]) -> Option<usize> {
     let len = tx_slice.len();
     if len < MIN_REPLY_BUF_LEN {
         None
     } else {
-        Some(build_reply_with_template(&pkt, tx_slice))
+        Some(build_reply_with_template(&pkt, source_mac, tx_slice))
     }
 }
 
@@ -89,13 +109,13 @@ fn u32_to_oct(bits: u32) -> [u8; 4] {
     [(bits >> 24) as u8, (bits >> 16) as u8, (bits >> 8) as u8, bits as u8]
 }
 
-fn build_reply_fast(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
+fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> usize {
     let mut len = 0;
     let ether_len;
     /* build ethernet packet */
     let mut ether = MutableEthernetPacket::new(reply).unwrap();
 
-    ether.set_source(pkt.ether_dest);
+    ether.set_source(source_mac);
     ether.set_destination(pkt.ether_source);
 
     ether_len = ether.packet_size();
@@ -166,21 +186,21 @@ fn build_reply_fast(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
     len
 }
 
-fn build_reply_with_template(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
+fn build_reply_with_template(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> usize {
     use std::ptr;
     unsafe {
-        ptr::copy_nonoverlapping::<u8>(::REPLY_TEMPLATE.as_ptr(), reply.as_mut_ptr(), 78);
+        ptr::copy_nonoverlapping::<u8>(REPLY_TEMPLATE.as_ptr(), reply.as_mut_ptr(), 78);
     }
-    build_reply_fast(pkt, reply)
+    build_reply_fast(pkt, source_mac, reply)
 }
 
-pub fn build_reply(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
+pub fn build_reply(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> usize {
     let mut len = 0;
     let ether_len;
     /* build ethernet packet */
     let mut ether = MutableEthernetPacket::new(reply).unwrap();
 
-    ether.set_source(pkt.ether_dest);
+    ether.set_source(source_mac);
     ether.set_destination(pkt.ether_source);
     ether.set_ethertype(EtherTypes::Ipv4);
     ether_len = ether.packet_size();
@@ -337,7 +357,6 @@ fn handle_ether_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket, mac: 
     match ethernet.get_ethertype() {
         EtherTypes::Ipv4 => {
             pkt.ether_source = ethernet.get_source();
-            pkt.ether_dest = mac_dest;
             handle_ipv4_packet(ethernet, pkt)
         },
         EtherTypes::Arp => Action::Drop,

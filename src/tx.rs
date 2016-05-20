@@ -138,9 +138,8 @@ impl<'a> Sender<'a> {
     fn send(pkt: OutgoingPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxStats, lock: &mut Arc<AtomicUsize>,
             ring_num: u16, source_mac: MacAddr, destination_mac: MacAddr) {
         match pkt {
-            OutgoingPacket::Ingress(mut pkt) => {
-                pkt.ether_dest = source_mac;
-                if let Some(len) = packet::handle_reply(pkt, buf) {
+            OutgoingPacket::Ingress(pkt) => {
+                if let Some(len) = packet::handle_reply(pkt, source_mac, buf) {
                     //println!("[TX#{}] SENDING PACKET\n", ring_num);
                     slot.set_flags(netmap::NS_BUF_CHANGED as u16 /* | netmap::NS_REPORT as u16 */);
                     slot.set_len(len as u16);
