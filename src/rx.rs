@@ -1,6 +1,6 @@
 use std::time::{self,Duration};
 use std::thread;
-use std::sync::mpsc;
+use ::mpsc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use ::netmap::{self, NetmapDescriptor, RxSlot};

@@ -8,11 +8,11 @@ extern crate clap;
 extern crate yaml_rust;
 extern crate parking_lot;
 extern crate fnv;
+extern crate mpsc;
 
 use std::cell::RefCell;
 use std::thread;
 use std::time::Duration;
-use std::sync::mpsc;
 use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT};
 use std::net::Ipv4Addr;
 use std::str::FromStr;

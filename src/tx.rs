@@ -1,8 +1,8 @@
 use std::mem;
 use std::time::{self,Duration};
 use std::thread;
-use std::sync::mpsc;
-use std::sync::mpsc::TryRecvError;
+use ::mpsc;
+use ::mpsc::TryRecvError;
 use std::sync::Arc;
 use std::net::Ipv4Addr;
 use std::sync::atomic::{AtomicUsize, Ordering};
