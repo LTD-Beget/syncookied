@@ -9,6 +9,7 @@ extern crate yaml_rust;
 extern crate parking_lot;
 extern crate fnv;
 
+use std::cell::RefCell;
 use std::thread;
 use std::time::Duration;
 use std::sync::mpsc;
@@ -69,6 +70,12 @@ lazy_static! {
     };
 }
 
+thread_local!(pub static LOCAL_ROUTING_TABLE: RefCell<HashMap<Ipv4Addr, HostConfiguration, BuildHasherDefault<fnv::FnvHasher>>> = {
+    let fnv = BuildHasherDefault::<FnvHasher>::default();
+    let hm = HashMap::with_hasher(fnv);
+    RefCell::new(hm)
+});
+
 pub struct RoutingTable;
 
 impl RoutingTable {
@@ -80,7 +87,35 @@ impl RoutingTable {
         w.insert(ip, host_conf);
     }
 
+    pub fn get_ips() -> Vec<Ipv4Addr> {
+        let r = GLOBAL_HOST_CONFIGURATION.read();
+        r.keys().cloned().collect()
+    }
+
+    pub fn sync_tables() {
+        LOCAL_ROUTING_TABLE.with(|rt| {
+            let ips = ::RoutingTable::get_ips();
+            let mut cache = rt.borrow_mut();
+            for ip in ips.iter() {
+                ::RoutingTable::with_host_config_global(*ip, |hc| { cache.insert(*ip, hc.to_owned()); });
+            }
+        })
+    }
+
     pub fn with_host_config<F>(ip: Ipv4Addr, mut f: F) -> Option<()> where F: FnMut(&HostConfiguration) {
+        LOCAL_ROUTING_TABLE.with(|rt| {
+            let r = rt.borrow();
+            if let Some(hc) = r.get(&ip) {
+                f(hc);
+                Some(())
+            } else {
+                println!("Config for {} not found", ip);
+                None
+            }
+        })
+    }
+
+    pub fn with_host_config_global<F>(ip: Ipv4Addr, mut f: F) -> Option<()> where F: FnMut(&HostConfiguration) {
         let r = GLOBAL_HOST_CONFIGURATION.read();
         if let Some(hc) = r.get(&ip) {
             f(hc);
@@ -103,7 +138,7 @@ impl RoutingTable {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct HostConfiguration {
     mac: MacAddr,
     tcp_timestamp: u64,

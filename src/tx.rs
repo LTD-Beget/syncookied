@@ -4,15 +4,22 @@ use std::thread;
 use std::sync::mpsc;
 use std::sync::mpsc::TryRecvError;
 use std::sync::Arc;
+use std::net::Ipv4Addr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use ::netmap::{self, NetmapDescriptor, TxSlot, NetmapSlot};
-use ::OutgoingPacket;
+use ::{OutgoingPacket,HostConfiguration};
 use ::packet;
 use ::scheduler;
 use ::scheduler::{CpuSet, Policy};
 use ::pnet::util::MacAddr;
 use ::pnet::packet::ethernet::MutableEthernetPacket;
 use ::util;
+use ::fnv;
+
+use std::collections::HashMap;
+use std::hash::BuildHasherDefault;
+use std::hash::BuildHasher;
+use fnv::FnvHasher;
 
 #[derive(Debug,Default)]
 struct TxStats {
@@ -74,6 +81,8 @@ impl<'a> Sender<'a> {
         let ival = time::Duration::new(seconds as u64, 0);
         let mut rate: usize = 0;
 
+        self.update_routing_cache();
+
         loop {
             //let fd = netmap.get_fd();
             /* block and wait for packet in queue */
@@ -116,8 +125,13 @@ impl<'a> Sender<'a> {
                 println!("[TX#{}]: sent {}Pkts/s, failed {}Pkts/s", self.ring_num, rate, self.stats.failed/seconds);
                 self.stats.clear();
                 before = time::Instant::now();
+                self.update_routing_cache();
             }
         }
+    }
+
+    fn update_routing_cache(&mut self) {
+        ::RoutingTable::sync_tables();
     }
 
     #[inline]
