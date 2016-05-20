@@ -15,14 +15,17 @@ fn cookie_hash(source_addr: u32, dest_addr: u32, source_port: u16, dest_port: u1
     let mut tmp: [u32; 16 + 5 + SHA_WORKSPACE_WORDS] = unsafe { mem::zeroed() };
 
     unsafe {
-        ptr::copy_nonoverlapping(::syncookie_secret[c as usize].as_ptr(), tmp.as_mut_ptr().offset(4), 17);
+        ::RoutingTable::with_host_config(Ipv4Addr::from(dest_addr.to_be()) /* to_be? */, |hc| {
+                ptr::copy_nonoverlapping(hc.syncookie_secret[c as usize].as_ptr(), tmp.as_mut_ptr().offset(4), 17);
+        });
     }
     tmp[0] = source_addr;
     tmp[1] = dest_addr;
     tmp[2] = ((source_port as u32) << 16) + dest_port as u32;
     tmp[3] = count;
     unsafe {
-        ::sha1::sha1_transform_ssse3(tmp.as_mut_ptr().offset(16), tmp.as_ptr() as *const u8, 1);
+        //::sha1::sha1_transform_ssse3(tmp.as_mut_ptr().offset(16), tmp.as_ptr() as *const u8, 1);
+        ::sha1::sha1_transform_avx(tmp.as_mut_ptr().offset(16), tmp.as_ptr() as *const u8, 1);
         //::sha1::sha_transform(tmp.as_mut_ptr().offset(16), tmp.as_ptr() as *const u8, tmp.as_mut_ptr().offset(16 + 5));
     }
 
@@ -73,6 +76,7 @@ pub fn generate_cookie_init_sequence(source_addr: Ipv4Addr, dest_addr: Ipv4Addr,
     (cookie, mssval)
 }
 
+/*
 #[test]
 fn test_cookie_init() {
     ::read_uptime();
@@ -85,6 +89,7 @@ fn test_cookie_init() {
     let mss = 1460;
     println!("COOKIE: {:?}", generate_cookie_init_sequence(source_addr, dest_addr, source_port, dest_port, seq.to_be(), mss, tcp_cookie_time));
 }
+*/
 
 #[inline]
 pub fn synproxy_init_timestamp_cookie(wscale: u8, sperm: u8, ecn: u8, tcp_time_stamp: u32) -> u32 {

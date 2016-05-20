@@ -1,8 +1,6 @@
 # 1 "sha1_ssse3_asm.S"
 # 1 "<built-in>"
 # 1 "<command-line>"
-# 1 "/usr/include/stdc-predef.h" 1 3 4
-# 1 "<command-line>" 2
 # 1 "sha1_ssse3_asm.S"
 # 31 "sha1_ssse3_asm.S"
 # 1 "./linux/linkage.h" 1
@@ -394,3 +392,90 @@ W_PRECALC_SSSE3
 
 
 SHA1_VECTOR_ASM sha1_transform_ssse3
+
+
+
+.macro W_PRECALC_AVX
+
+.purgem W_PRECALC_00_15
+.macro W_PRECALC_00_15
+    W_PRECALC_00_15_AVX
+.endm
+.purgem W_PRECALC_16_31
+.macro W_PRECALC_16_31
+    W_PRECALC_16_31_AVX
+.endm
+.purgem W_PRECALC_32_79
+.macro W_PRECALC_32_79
+    W_PRECALC_32_79_AVX
+.endm
+
+.macro W_PRECALC_00_15_AVX
+  .if ((i & 3) == 0)
+ vmovdqu (i*4)(%r10), %xmm0
+  .elseif ((i & 3) == 1)
+ vpshufb %xmm10, %xmm0, W
+  .elseif ((i & 3) == 2)
+ vpaddd (%r8), W, %xmm0
+  .elseif ((i & 3) == 3)
+ vmovdqa %xmm0, (((i&~3) & 15) * 4)(%rsp)
+ W_PRECALC_ROTATE
+  .endif
+.endm
+
+.macro W_PRECALC_16_31_AVX
+  .if ((i & 3) == 0)
+ vpalignr $8, W_minus_16, W_minus_12, W # w[i-14]
+ vpsrldq $4, W_minus_04, %xmm0 # w[i-3]
+ vpxor W_minus_08, W, W
+ vpxor W_minus_16, %xmm0, %xmm0
+  .elseif ((i & 3) == 1)
+ vpxor %xmm0, W, W
+ vpslldq $12, W, %xmm9
+ vpslld $1, W, %xmm0
+  .elseif ((i & 3) == 2)
+ vpsrld $31, W, W
+ vpor W, %xmm0, %xmm0
+ vpslld $2, %xmm9, W
+ vpsrld $30, %xmm9, %xmm9
+  .elseif ((i & 3) == 3)
+ vpxor W, %xmm0, %xmm0
+ vpxor %xmm9, %xmm0, W
+ vpaddd K_XMM(%r8), W, %xmm0
+ vmovdqu %xmm0, (((i&~3) & 15) * 4)(%rsp)
+ W_PRECALC_ROTATE
+  .endif
+.endm
+
+.macro W_PRECALC_32_79_AVX
+  .if ((i & 3) == 0)
+ vpalignr $8, W_minus_08, W_minus_04, %xmm0
+ vpxor W_minus_28, W, W # W is W_minus_32 before xor
+  .elseif ((i & 3) == 1)
+ vpxor W_minus_16, %xmm0, %xmm0
+ vpxor %xmm0, W, W
+  .elseif ((i & 3) == 2)
+ vpslld $2, W, %xmm0
+ vpsrld $30, W, W
+ vpor W, %xmm0, W
+  .elseif ((i & 3) == 3)
+ vpaddd K_XMM(%r8), W, %xmm0
+ vmovdqu %xmm0, (((i&~3) & 15) * 4)(%rsp)
+ W_PRECALC_ROTATE
+  .endif
+.endm
+
+.endm
+
+W_PRECALC_AVX
+.purgem xmm_mov
+.macro xmm_mov a, b
+ vmovdqu \a,\b
+.endm
+
+
+
+
+
+
+SHA1_VECTOR_ASM sha1_transform_avx

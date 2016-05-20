@@ -1,4 +1,3 @@
-use std::sync::atomic::Ordering;
 use std::net::Ipv4Addr;
 
 use pnet::packet::Packet;
@@ -14,6 +13,8 @@ use pnet::util::MacAddr;
 use ::cookie;
 use ::csum;
 
+pub const MIN_REPLY_BUF_LEN: usize = 78;
+
 lazy_static! {
     static ref REPLY_TEMPLATE: Vec<u8> = {
         let mut data: Vec<u8> = vec![0;78];
@@ -21,7 +22,6 @@ lazy_static! {
         {
             let pkt = IngressPacket {
                 ether_source: MacAddr::new(0, 0, 0, 0, 0, 0),
-                ether_dest: MacAddr::new(0, 0, 0, 0, 0, 0),
                 ipv4_source: Ipv4Addr::new(127, 0, 0, 1),
                 ipv4_destination: Ipv4Addr::new(127, 0, 0, 1),
                 tcp_source: 0,
@@ -30,33 +30,30 @@ lazy_static! {
                 tcp_sequence: 0,
                 tcp_mss: 1460,
             };
-            build_reply(&pkt, &mut data);
+            build_reply(&pkt, MacAddr::new(0, 0, 0, 0, 0, 0), &mut data);
         }
         data
     };
 }
 
-pub const MIN_REPLY_BUF_LEN: usize = 78;
-
 #[allow(dead_code)]
 #[derive(Debug)]
 pub enum Action {
     Drop,
-    Forward,
+    Forward(MacAddr),
     Reply(IngressPacket)
 }
 
 #[derive(Debug)]
 pub struct IngressPacket {
     pub ether_source: MacAddr,
-    pub ether_dest: MacAddr,
     pub ipv4_source: Ipv4Addr,
     pub ipv4_destination: Ipv4Addr,
     pub tcp_source: u16,
     pub tcp_destination: u16,
     pub tcp_timestamp: [u8;4],
     pub tcp_sequence: u32,
-    pub tcp_mss: u32
+    pub tcp_mss: u16
 }
 
 impl Default for IngressPacket {
@@ -97,12 +94,12 @@ pub fn handle_input(packet_data: &[u8], mac: MacAddr) -> Action {
 }
 
 #[inline]
-pub fn handle_reply(pkt: IngressPacket, tx_slice: &mut [u8]) -> Option<usize> {
+pub fn handle_reply(pkt: IngressPacket, source_mac: MacAddr, tx_slice: &mut [u8]) -> Option<usize> {
     let len = tx_slice.len();
     if len < MIN_REPLY_BUF_LEN {
         None
     } else {
-        Some(build_reply_with_template(&pkt, tx_slice))
+        Some(build_reply_with_template(&pkt, source_mac, tx_slice))
     }
 }
 
@@ -111,13 +108,13 @@ fn u32_to_oct(bits: u32) -> [u8; 4] {
     [(bits >> 24) as u8, (bits >> 16) as u8, (bits >> 8) as u8, bits as u8]
 }
 
-fn build_reply_fast(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
+fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> usize {
     let mut len = 0;
     let ether_len;
     /* build ethernet packet */
     let mut ether = MutableEthernetPacket::new(reply).unwrap();
 
-    ether.set_source(pkt.ether_dest);
+    ether.set_source(source_mac);
     ether.set_destination(pkt.ether_source);
 
     ether_len = ether.packet_size();
@@ -133,11 +130,13 @@ fn build_reply_fast(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
     {
         use std::ptr;
         /* build tcp packet */
-        let cookie_time = ::TCP_COOKIE_TIME.load(Ordering::Relaxed);
+        let mut cookie_time = 0;
+        ::RoutingTable::with_host_config(pkt.ipv4_destination, |hc| cookie_time = hc.tcp_cookie_time);
+
         let (seq_num, mss_val) = cookie::generate_cookie_init_sequence(
             pkt.ipv4_source, pkt.ipv4_destination,
             pkt.tcp_source, pkt.tcp_destination, pkt.tcp_sequence,
-            1460 /* FIXME */, cookie_time as u32);
+            pkt.tcp_mss, cookie_time as u32);
         let mut tcp = MutableTcpPacket::new(&mut ip.payload_mut()[0..20 + 24]).unwrap();
         tcp.set_source(pkt.tcp_destination);
         tcp.set_destination(pkt.tcp_source);
@@ -148,7 +147,8 @@ fn build_reply_fast(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
         {
             let options = tcp.get_options_raw_mut();
             { /* Timestamp */
-                let my_tcp_time = ::TCP_TIME_STAMP.load(Ordering::Relaxed) as u32;
+                let mut my_tcp_time = 0;
+                ::RoutingTable::with_host_config(pkt.ipv4_destination, |hc| my_tcp_time = hc.tcp_timestamp as u32);
                 /*
                 let in_options = tcp_in.get_options_iter();
                 let mut their_time = &mut [0, 0, 0, 0][..];
@@ -185,21 +185,22 @@ fn build_reply_fast(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
     len
 }
 
-fn build_reply_with_template(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
+fn build_reply_with_template(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> usize {
     use std::ptr;
     unsafe {
-        ptr::copy_nonoverlapping::<u8>(REPLY_TEMPLATE.as_ptr(), reply.as_mut_ptr(), 78);
+        ptr::copy_nonoverlapping::<u8>(REPLY_TEMPLATE.as_ptr().offset(12 /* ether src/dst */),
+                                       reply.as_mut_ptr().offset(12), MIN_REPLY_BUF_LEN - 12);
     }
-    build_reply_fast(pkt, reply)
+    build_reply_fast(pkt, source_mac, reply)
 }
 
-fn build_reply(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
+pub fn build_reply(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> usize {
     let mut len = 0;
     let ether_len;
     /* build ethernet packet */
     let mut ether = MutableEthernetPacket::new(reply).unwrap();
 
-    ether.set_source(pkt.ether_dest);
+    ether.set_source(source_mac);
     ether.set_destination(pkt.ether_source);
     ether.set_ethertype(EtherTypes::Ipv4);
     ether_len = ether.packet_size();
@@ -223,11 +224,12 @@ fn build_reply(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
     {
         use std::ptr;
         /* build tcp packet */
-        let cookie_time = ::TCP_COOKIE_TIME.load(Ordering::Relaxed);
+        let mut cookie_time = 0;
+        ::RoutingTable::with_host_config(pkt.ipv4_destination, |hc| cookie_time = hc.tcp_cookie_time);
         let (seq_num, mss_val) = cookie::generate_cookie_init_sequence(
             pkt.ipv4_source, pkt.ipv4_destination,
             pkt.tcp_source, pkt.tcp_destination, pkt.tcp_sequence,
-            1460 /* FIXME */, cookie_time as u32);
+            pkt.tcp_mss, cookie_time as u32);
         let mut tcp = MutableTcpPacket::new(&mut ip.payload_mut()[0..20 + 24]).unwrap();
         tcp.set_source(pkt.tcp_destination);
         tcp.set_destination(pkt.tcp_source);
@@ -253,7 +255,8 @@ fn build_reply(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
                 sack.get_length_raw_mut()[0] = 2;
             }
             { /* Timestamp */
-                let my_tcp_time = ::TCP_TIME_STAMP.load(Ordering::Relaxed) as u32;
+                let mut my_tcp_time = 0;
+                ::RoutingTable::with_host_config(pkt.ipv4_destination, |hc| my_tcp_time = hc.tcp_timestamp as u32);
                 /*
                 let in_options = tcp_in.get_options_iter();
                 let mut their_time = &mut [0, 0, 0, 0][..];
@@ -296,7 +299,7 @@ fn build_reply(pkt: &IngressPacket, reply: &mut [u8]) -> usize {
     len
 }
 
-fn handle_tcp_packet(packet: &[u8], pkt: &mut IngressPacket) -> Action {
+fn handle_tcp_packet(packet: &[u8], fwd_mac: MacAddr, pkt: &mut IngressPacket) -> Action {
     use std::ptr;
     let tcp = TcpPacket::new(packet);
     if let Some(tcp) = tcp {
@@ -315,7 +318,7 @@ fn handle_tcp_packet(packet: &[u8], pkt: &mut IngressPacket) -> Action {
             pkt.tcp_mss = 1460; /* HACK */
             return Action::Reply(IngressPacket::default());
         }
-        Action::Forward
+        Action::Forward(fwd_mac)
     } else {
         println!("Malformed TCP Packet");
         Action::Drop
@@ -323,10 +326,11 @@ fn handle_tcp_packet(packet: &[u8], pkt: &mut IngressPacket) -> Action {
 }
 
 fn handle_transport_protocol(protocol: IpNextHeaderProtocol, packet: &[u8],
+                             fwd_mac: MacAddr,
                              pkt: &mut IngressPacket) -> Action {
     match protocol {
-        IpNextHeaderProtocols::Tcp  => handle_tcp_packet(packet, pkt),
-        _ => Action::Forward
+        IpNextHeaderProtocols::Tcp  => handle_tcp_packet(packet, fwd_mac, pkt),
+        _ => Action::Forward(fwd_mac),
     }
 }
 
@@ -335,8 +339,13 @@ fn handle_ipv4_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket) -> Act
     if let Some(header) = header {
         pkt.ipv4_source = header.get_source();
         pkt.ipv4_destination = header.get_destination();
+        let mut fwd_mac = MacAddr::new(0xff, 0xff, 0xff, 0xff, 0xff, 0xff);
+        ::RoutingTable::with_host_config(pkt.ipv4_destination, |hc| {
+            fwd_mac = hc.mac;
+        });
         handle_transport_protocol(header.get_next_level_protocol(),
                                   header.payload(),
+                                  fwd_mac,
                                   pkt)
     } else {
         println!("Malformed IPv4 Packet");
@@ -354,11 +363,9 @@ fn handle_ether_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket, mac: 
     match ethernet.get_ethertype() {
         EtherTypes::Ipv4 => {
             pkt.ether_source = ethernet.get_source();
-            pkt.ether_dest = mac_dest;
             handle_ipv4_packet(ethernet, pkt)
         },
-        EtherTypes::Arp => Action::Drop,
-        _  => Action::Forward
+        _  => Action::Drop,
     }
 }
 

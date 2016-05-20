@@ -10,6 +10,12 @@ crossbeam = "0.2.5"
 scheduler = "0.1.1"
 clap = "2.4.0"
 lazy_static = "0.2.1"
+yaml-rust = "0.3.2"
+parking_lot = "0.1.2"
+
+[dependencies.mpsc]
+git = "https://github.com/polachok/mpsc.git"
+rev = "bf5974342d20df47963fb5041c7f01157fbf441c"
 
 [dependencies.netmap_sys]
 git = "https://github.com/libpnet/netmap_sys"

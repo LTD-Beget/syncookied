@@ -5,13 +5,20 @@ extern crate pnet;
 extern crate crossbeam;
 extern crate scheduler;
 extern crate clap;
+extern crate yaml_rust;
+extern crate parking_lot;
+extern crate mpsc;
 
+use std::cell::RefCell;
 use std::thread;
 use std::time::Duration;
-use std::sync::mpsc;
-use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT};
+use std::sync::atomic::{AtomicUsize};
 use std::net::Ipv4Addr;
+use std::str::FromStr;
 use pnet::util::MacAddr;
+use parking_lot::RwLock;
+
+use std::collections::BTreeMap;
 
 use clap::{Arg, App, AppSettings, SubCommand};
 
@@ -25,20 +32,112 @@ mod tx;
 mod rx;
 mod uptime;
 mod arp;
+mod config;
 use uptime::UptimeReader;
 use packet::{IngressPacket};
 use netmap::{Direction,NetmapDescriptor};
 
-pub static TCP_TIME_STAMP: AtomicUsize = ATOMIC_USIZE_INIT;
-pub static TCP_COOKIE_TIME: AtomicUsize = ATOMIC_USIZE_INIT;
-pub static mut syncookie_secret: [[u32;17];2] = [[0;17];2];
+lazy_static! {
+    /* maps public IP to tcp parameters */
+    static ref GLOBAL_HOST_CONFIGURATION: RwLock<BTreeMap<Ipv4Addr, HostConfiguration>> = {
+        let hm = BTreeMap::new();
+        RwLock::new(hm)
+    };
+
+}
+
+thread_local!(pub static LOCAL_ROUTING_TABLE: RefCell<BTreeMap<Ipv4Addr, HostConfiguration>> = {
+    let hm = BTreeMap::new();
+    RefCell::new(hm)
+});
+
+pub struct RoutingTable;
+
+impl RoutingTable {
+    fn add_host(ip: Ipv4Addr, mac: MacAddr) {
+        println!("Configuration: {} -> {}", ip, mac);
+        let host_conf = HostConfiguration::new(mac);
+        let mut w = GLOBAL_HOST_CONFIGURATION.write();
+
+        w.insert(ip, host_conf);
+    }
+
+    pub fn get_ips() -> Vec<Ipv4Addr> {
+        let r = GLOBAL_HOST_CONFIGURATION.read();
+        r.keys().cloned().collect()
+    }
+
+    pub fn sync_tables() {
+        LOCAL_ROUTING_TABLE.with(|rt| {
+            let ips = ::RoutingTable::get_ips();
+            let mut cache = rt.borrow_mut();
+            for ip in ips.iter() {
+                ::RoutingTable::with_host_config_global(*ip, |hc| { cache.insert(*ip, hc.to_owned()); });
+            }
+        })
+    }
+
+    pub fn with_host_config<F>(ip: Ipv4Addr, mut f: F) -> Option<()> where F: FnMut(&HostConfiguration) {
+        LOCAL_ROUTING_TABLE.with(|rt| {
+            let r = rt.borrow();
+            if let Some(hc) = r.get(&ip) {
+                f(hc);
+                Some(())
+            } else {
+                println!("Config for {} not found", ip);
+                None
+            }
+        })
+    }
+
+    pub fn with_host_config_global<F>(ip: Ipv4Addr, mut f: F) -> Option<()> where F: FnMut(&HostConfiguration) {
+        let r = GLOBAL_HOST_CONFIGURATION.read();
+        if let Some(hc) = r.get(&ip) {
+            f(hc);
+            Some(())
+        } else {
+            println!("Config for {} not found", ip);
+            None
+        }
+    }
+
+    pub fn with_host_config_mut<F>(ip: Ipv4Addr, mut f: F) -> Option<()> where F: FnMut(&mut HostConfiguration) {
+        let mut w = GLOBAL_HOST_CONFIGURATION.write();
+        if let Some(hc) = w.get_mut(&ip) {
+            f(hc);
+            Some(())
+        } else {
+            println!("Config for {} not found", ip);
+            None
+        }
+    }
+}
+
+#[derive(Debug,Clone)]
+pub struct HostConfiguration {
+    mac: MacAddr,
+    tcp_timestamp: u64,
+    tcp_cookie_time: u64,
+    syncookie_secret: [[u32;17];2] 
+}
+
+impl HostConfiguration {
+    fn new(mac: MacAddr) -> Self {
+        HostConfiguration {
+            mac: mac,
+            tcp_timestamp: 0,
+            tcp_cookie_time: 0,
+            syncookie_secret: [[0;17];2],
+        }
+    }
+}
 
 pub enum OutgoingPacket {
     Ingress(IngressPacket),
-    Forwarded((usize, usize)),
+    Forwarded((usize, usize, MacAddr)),
 }
 
-fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, fwd_mac: MacAddr, uptime_reader: Box<UptimeReader>) {
+fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, uptime_readers: Vec<Box<UptimeReader>>) {
     use std::sync::{Mutex,Arc};
 
     let rx_nm = Arc::new(Mutex::new(NetmapDescriptor::new(rx_iface).unwrap()));
@@ -64,13 +163,15 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, fwd_mac
 
     crossbeam::scope(|scope| {
         let one_sec = Duration::new(1, 0);
-        scope.spawn(move|| loop {
-            match uptime_reader.read() {
-                Ok(buf) => uptime::update(buf),
-                Err(err) => println!("Failed to read uptime: {:?}", err),
-            }
-            thread::sleep(one_sec);
-        });
+        for uptime_reader in uptime_readers.into_iter() {
+            scope.spawn(move|| loop {
+                match uptime_reader.read() {
+                    Ok(buf) => uptime::update(Ipv4Addr::new(185,50,25,2), buf),
+                    Err(err) => println!("Failed to read uptime: {:?}", err),
+                }
+                thread::sleep(one_sec);
+            });
+        }
 
         for ring in 0..rx_count {
             let ring = ring;
@@ -116,7 +217,7 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, fwd_mac
                     nm.clone_ring(ring, Direction::Output).unwrap()
                 };
                 let cpu = rx_count as usize + ring as usize; /* HACK */
-                tx::Sender::new(ring, cpu, rx, &mut ring_nm, pair, tx_mac, fwd_mac).run();
+                tx::Sender::new(ring, cpu, rx, &mut ring_nm, pair, tx_mac).run();
             });
         }
 
@@ -183,19 +284,6 @@ fn main() {
                                     .value_name("xx:xx:xx:xx:xx:xx")
                                     .help("Output interface mac address")
                                     .takes_value(true))
-                               .arg(Arg::with_name("remote")
-                                    .required_unless("local")
-                                    .long("remote")
-                                    .value_name("ip:port")
-                                    .help("ip:port to get uptime from")
-                                    .takes_value(true))
-                               .arg(Arg::with_name("fwd-mac")
-                                    .short("F")
-                                    .required(true)
-                                    .long("forward-to")
-                                    .value_name("xx:xx:xx:xx:xx:xx")
-                                    .help("Mac address we forward to")
-                                    .takes_value(true))
                                .get_matches();
 
     if let Some(matches) = matches.subcommand_matches("server") {
@@ -207,16 +295,18 @@ fn main() {
         let tx_iface = matches.value_of("out").unwrap_or(rx_iface);
         let rx_mac = matches.value_of("in-mac").map(util::parse_mac).expect("Expected valid mac").unwrap();
         let tx_mac: MacAddr = matches.value_of("out-mac").map(|mac| util::parse_mac(mac).expect("Expected valid mac")).unwrap_or(rx_mac.clone());
-        let fwd_mac = matches.value_of("fwd-mac").map(util::parse_mac).expect("Expected valid mac").unwrap();
         let local = matches.is_present("local");
         let ncpus = util::get_cpu_count();
-        let uptime_reader: Box<UptimeReader> = if local {
-            Box::new(uptime::LocalReader)
+
+        let uptime_readers = if !local {
+            config::configure().iter().map(|addr| 
+                Box::new(uptime::UdpReader::new(addr.to_owned())) as Box<UptimeReader>
+            ).collect()
         } else {
-            let addr = matches.value_of("remote").expect("Expected valid remote addr");
-            Box::new(uptime::UdpReader::new(addr.to_owned()))
+            vec![Box::new(uptime::LocalReader) as Box<UptimeReader>]
         };
-        println!("interfaces: [Rx: {}/{}, Tx: {}/{}] Fwd to: {} Cores: {} Local: {}", rx_iface, rx_mac, tx_iface, tx_mac, fwd_mac, ncpus, local);
-        run(&rx_iface, &tx_iface, rx_mac, tx_mac, fwd_mac, uptime_reader);
+
+        println!("interfaces: [Rx: {}/{}, Tx: {}/{}] Cores: {} Local: {}", rx_iface, rx_mac, tx_iface, tx_mac, ncpus, local);
+        run(&rx_iface, &tx_iface, rx_mac, tx_mac, uptime_readers);
     }
 }

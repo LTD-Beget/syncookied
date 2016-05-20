@@ -1,6 +1,6 @@
 use std::time::{self,Duration};
 use std::thread;
-use std::sync::mpsc;
+use ::mpsc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use ::netmap::{self, NetmapDescriptor, RxSlot};
@@ -55,6 +55,10 @@ impl<'a> Receiver<'a> {
         }
     }
 
+    fn update_routing_cache(&mut self) {
+        ::RoutingTable::sync_tables();
+    }
+
     pub fn run(mut self) {
         println!("RX loop for ring {:?}", self.ring_num);
         println!("Rx rings: {:?}", self.netmap.get_rx_rings());
@@ -68,22 +72,23 @@ impl<'a> Receiver<'a> {
         thread::sleep(Duration::new(1, 0));
         println!("[RX#{}] started", self.ring_num);
 
+        self.update_routing_cache();
+
         let mut before = time::Instant::now();
         let seconds: usize = 10;
         let ival = time::Duration::new(seconds as u64, 0);
-        let stats = &mut self.stats;
 
         loop {
             if let Some(_) = self.netmap.poll(netmap::Direction::Input) {
                 if let Some(ring) = self.netmap.rx_iter().next() {
                     let mut fw = false;
                     for (slot, buf) in ring.iter() {
-                        stats.received += 1;
+                        self.stats.received += 1;
                         match packet::handle_input(buf, self.mac) {
                             Action::Drop => {
-                                stats.dropped += 1;
+                                self.stats.dropped += 1;
                             },
-                            Action::Forward => {
+                            Action::Forward(fwd_mac) => {
                                 let to_forward = &self.lock;
 
                                 let slot_ptr: usize = slot as *mut RxSlot as usize;
@@ -94,12 +99,12 @@ impl<'a> Receiver<'a> {
                                     ring_num, slot_ptr, buf_ptr, slot.get_buf_idx());
 */
                                 to_forward.fetch_add(1, Ordering::SeqCst);
-                                self.chan.send(OutgoingPacket::Forwarded((slot_ptr, buf_ptr))).unwrap();
-                                stats.forwarded += 1;
+                                self.chan.send(OutgoingPacket::Forwarded((slot_ptr, buf_ptr, fwd_mac))).unwrap();
+                                self.stats.forwarded += 1;
                                 fw = true;
                             },
                             Action::Reply(packet) => {
-                                stats.queued += 1;
+                                self.stats.queued += 1;
                                 self.chan.send(OutgoingPacket::Ingress(packet)).unwrap();
                             },
                         }
@@ -121,10 +126,11 @@ impl<'a> Receiver<'a> {
             }
             if before.elapsed() >= ival {
                 println!("[RX#{}]: received: {}Pkts/s, dropped: {}Pkts/s, forwarded: {}Pkts/s, queued: {}Pkts/s",
-                            self.ring_num, stats.received/seconds, stats.dropped/seconds,
-                            stats.forwarded/seconds, stats.queued/seconds);
-                stats.clear();
+                            self.ring_num, self.stats.received/seconds, self.stats.dropped/seconds,
+                            self.stats.forwarded/seconds, self.stats.queued/seconds);
+                self.stats.clear();
                 before = time::Instant::now();
+                self.update_routing_cache();
             }
         }
     }
