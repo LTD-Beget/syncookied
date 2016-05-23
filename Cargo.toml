@@ -18,8 +18,8 @@ git = "https://github.com/polachok/mpsc.git"
 rev = "bf5974342d20df47963fb5041c7f01157fbf441c"
 
 [dependencies.netmap_sys]
-git = "https://github.com/libpnet/netmap_sys"
-rev = "4bc5496c0afb6dc884a3d8c686a58bff82b323b8"
+git = "https://github.com/polachok/netmap_sys"
+rev = "0d48d654fc4b1d8c29e33094afb29c11d4ce7c53"
 features = [ "netmap_with_libs" ]
 
 [dependencies.pnet]
