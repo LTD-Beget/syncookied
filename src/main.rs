@@ -137,7 +137,7 @@ pub enum OutgoingPacket {
     Forwarded((usize, usize, MacAddr)),
 }
 
-fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, uptime_readers: Vec<Box<UptimeReader>>) {
+fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, uptime_readers: Vec<(Ipv4Addr, Box<UptimeReader>)>) {
     use std::sync::{Mutex,Arc};
 
     let rx_nm = Arc::new(Mutex::new(NetmapDescriptor::new(rx_iface).unwrap()));
@@ -163,10 +163,10 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, uptime_
 
     crossbeam::scope(|scope| {
         let one_sec = Duration::new(1, 0);
-        for uptime_reader in uptime_readers.into_iter() {
+        for (ip, uptime_reader) in uptime_readers.into_iter() {
             scope.spawn(move|| loop {
                 match uptime_reader.read() {
-                    Ok(buf) => uptime::update(Ipv4Addr::new(185,50,25,2), buf),
+                    Ok(buf) => uptime::update(ip, buf),
                     Err(err) => println!("Failed to read uptime: {:?}", err),
                 }
                 thread::sleep(one_sec);
@@ -299,11 +299,11 @@ fn main() {
         let ncpus = util::get_cpu_count();
 
         let uptime_readers = if !local {
-            config::configure().iter().map(|addr| 
-                Box::new(uptime::UdpReader::new(addr.to_owned())) as Box<UptimeReader>
+            config::configure().iter().map(|&(ip, ref addr)|
+                (ip, Box::new(uptime::UdpReader::new(addr.to_owned())) as Box<UptimeReader>)
             ).collect()
         } else {
-            vec![Box::new(uptime::LocalReader) as Box<UptimeReader>]
+            vec![(Ipv4Addr::new(127,0,0,1), Box::new(uptime::LocalReader) as Box<UptimeReader>)]
         };
 
         println!("interfaces: [Rx: {}/{}, Tx: {}/{}] Cores: {} Local: {}", rx_iface, rx_mac, tx_iface, tx_mac, ncpus, local);
