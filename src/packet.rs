@@ -319,16 +319,18 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: MacAddr, pkt: &mut IngressPacket) -
             return Action::Reply(IngressPacket::default());
         }
         if tcp.get_flags() & TcpFlags::ACK == TcpFlags::ACK {
-            println!("Check cookie!");
             let cookie = tcp.get_acknowledgement() - 1;
             let tcp_saddr = tcp.get_source();
             let tcp_daddr = tcp.get_destination();
             let ip_saddr = pkt.ipv4_source;
             let ip_daddr = pkt.ipv4_destination;
             let seq = tcp.get_sequence();
+            println!("Check cookie for {}:{} -> {}:{}",
+                     ip_saddr, tcp_saddr, ip_daddr, tcp_daddr,
+                     );
             let res = cookie::cookie_check(ip_saddr, ip_daddr, tcp_saddr, tcp_daddr, 
                                  seq, cookie);
-            println!("check result is {}", res);
+            println!("check result is {:?}", res);
         }
         Action::Forward(fwd_mac)
     } else {

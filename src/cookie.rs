@@ -99,15 +99,13 @@ fn check_tcp_syn_cookie(cookie: u32, saddr: u32, daddr: u32,
     if diff >= Wrapping(MAX_SYNCOOKIE_AGE) {
         return 0xffffffff;
     }
-    let Wrapping(cd) = count - diff;
-    let Wrapping(res) = (cookie - Wrapping(cookie_hash(saddr, daddr, sport, dport, cd, 1))) & Wrapping(COOKIEMASK);
-    res
+    ((cookie - Wrapping(cookie_hash(saddr, daddr, sport, dport, (count - diff).0, 1))) & Wrapping(COOKIEMASK)).0
 }
 
 #[inline]
 pub fn cookie_check(source_addr: Ipv4Addr, dest_addr: Ipv4Addr,
                     source_port: u16, dest_port: u16, seq: u32,
-                    cookie: u32) -> u16 {
+                    cookie: u32) -> Option<&'static u16> {
     let seq = seq - 1;
     let source_octets = source_addr.octets();
     let dest_octets = dest_addr.octets();
@@ -115,9 +113,10 @@ pub fn cookie_check(source_addr: Ipv4Addr, dest_addr: Ipv4Addr,
                         oct_to_u32(dest_octets).to_be(), source_port.to_be(),
                         dest_port.to_be(), seq);
     println!("MSSIND = {}", mssind);
-    if mssind < 4 { MSSTAB[mssind as usize] } else { 0 }
+    MSSTAB.get(mssind as usize)
 }
 
+/*
 #[test]
 fn test_cookie_init() {
     use ::pnet::util::MacAddr;
@@ -133,9 +132,10 @@ fn test_cookie_init() {
     let (cookie, mss) = generate_cookie_init_sequence(source_addr, dest_addr, source_port, dest_port, seq.to_be(), mss, tcp_cookie_time);
 
     println!("COOKIE: {:?}", (cookie, mss));
-    let mss = cookie_check(dest_addr, source_addr, dest_port, source_port, seq + 1, cookie);
+    let mss = cookie_check(source_addr, dest_addr, source_port, dest_port, seq + 1, cookie);
     println!("CHECK COOKIE: {:?}", mss);
 }
+*/
 
 #[inline]
 pub fn synproxy_init_timestamp_cookie(wscale: u8, sperm: u8, ecn: u8, tcp_time_stamp: u32) -> u32 {
