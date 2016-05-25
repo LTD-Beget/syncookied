@@ -333,17 +333,18 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: MacAddr, pkt: &mut IngressPacket) -
                     println!("Have state for {}:{} -> {}:{}, passing", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
                     action = Action::Forward(fwd_mac)
                 } else {
-                    println!("Check cookie for {}:{} -> {}:{}",
+                    //println!("State for {}:{} -> {}:{} not found", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
+                    /* println!("Check cookie for {}:{} -> {}:{}",
                              ip_saddr, tcp_saddr, ip_daddr, tcp_daddr,
-                             );
+                             ); */
                     let res = cookie::cookie_check(ip_saddr, ip_daddr, tcp_saddr, tcp_daddr, 
                                                    seq, cookie);
-                    println!("check result is {:?}", res);
+                    //println!("check result is {:?}", res);
                     if res.is_some() {
                         new = true;
                         action = Action::Forward(fwd_mac);
                     } else {
-                        println!("Bad cookie, drop");
+                        //println!("Bad cookie, drop");
                     }
                 }
             });
@@ -352,6 +353,7 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: MacAddr, pkt: &mut IngressPacket) -
                     hc.state_table.add_state(ip_saddr, tcp_saddr, tcp_daddr, 1);
                 });
             }
+            //println!("{}:{} -> {}:{} action: {:?}", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr, action);
             return action;
         }
         Action::Forward(fwd_mac)

@@ -96,6 +96,8 @@ fn check_tcp_syn_cookie(cookie: u32, saddr: u32, daddr: u32,
     /* Cookie is now reduced to (count * 2^24) ^ (hash % 2^24) */
     diff = (count - (cookie >> COOKIEBITS as usize)) & Wrapping(0xffffffff >> COOKIEBITS);
     if diff >= Wrapping(MAX_SYNCOOKIE_AGE) {
+        let cookie_time = cookie >> COOKIEBITS as usize;
+        //println!("COOKIE TOO OLD: {} NOW: {} COOKIE: {}", diff, count, cookie_time);
         return 0xffffffff;
     }
     ((cookie - Wrapping(cookie_hash(saddr, daddr, sport, dport, (count - diff).0, 1))) & Wrapping(COOKIEMASK)).0
@@ -111,6 +113,9 @@ pub fn cookie_check(source_addr: Ipv4Addr, dest_addr: Ipv4Addr,
     let mssind = check_tcp_syn_cookie(cookie, oct_to_u32(source_octets).to_be(),
                         oct_to_u32(dest_octets).to_be(), source_port.to_be(),
                         dest_port.to_be(), seq);
+    if mssind > 3 {
+        //println!("COOKIE MSS IDX: {}", mssind);
+    }
     MSSTAB.get(MSSTAB.len() - (mssind as usize) - 1)
 }
 
