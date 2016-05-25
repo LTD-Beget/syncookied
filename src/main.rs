@@ -8,7 +8,10 @@ extern crate clap;
 extern crate yaml_rust;
 extern crate parking_lot;
 extern crate mpsc;
+extern crate intmap;
+extern crate fnv;
 
+use std::fmt;
 use std::cell::RefCell;
 use std::thread;
 use std::time::Duration;
@@ -17,8 +20,10 @@ use std::net::Ipv4Addr;
 use std::str::FromStr;
 use pnet::util::MacAddr;
 use parking_lot::RwLock;
+use intmap::LocklessIntMap;
 
 use std::collections::BTreeMap;
+use std::hash::BuildHasherDefault;
 
 use clap::{Arg, App, AppSettings, SubCommand};
 
@@ -43,13 +48,49 @@ lazy_static! {
         let hm = BTreeMap::new();
         RwLock::new(hm)
     };
-
 }
 
 thread_local!(pub static LOCAL_ROUTING_TABLE: RefCell<BTreeMap<Ipv4Addr, HostConfiguration>> = {
     let hm = BTreeMap::new();
     RefCell::new(hm)
 });
+
+#[derive(Clone)]
+struct StateTable {
+    map: LocklessIntMap<BuildHasherDefault<fnv::FnvHasher>>,
+}
+
+impl fmt::Debug for StateTable {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "StateTable")
+    }
+}
+
+impl StateTable {
+    fn oct_to_u32(octets: [u8; 4]) -> u32 {
+        (octets[0] as u32) << 24 | (octets[1] as u32) << 16 | (octets[2] as u32) << 8 | octets[3] as u32
+    }
+
+    fn new(size: usize) -> Self {
+        StateTable {
+            map: LocklessIntMap::new(1024 * 1024, BuildHasherDefault::<fnv::FnvHasher>::default())
+        }
+    }
+
+    pub fn add_state(&mut self, ip: Ipv4Addr, source_port: u16, dest_port: u16, state: usize) {
+        let key: usize = (Self::oct_to_u32(ip.octets()) as usize) << 32
+                         | (source_port as usize) << 16
+                         | dest_port as usize;
+        self.map.insert(key, state);
+    }
+    
+    pub fn get_state(&self, ip: Ipv4Addr, source_port: u16, dest_port: u16) -> Option<usize> {
+        let key: usize = (Self::oct_to_u32(ip.octets()) as usize) << 32
+                         | (source_port as usize) << 16
+                         | dest_port as usize;
+        self.map.get(key)
+    }
+}
 
 pub struct RoutingTable;
 
@@ -118,7 +159,8 @@ pub struct HostConfiguration {
     mac: MacAddr,
     tcp_timestamp: u64,
     tcp_cookie_time: u64,
-    syncookie_secret: [[u32;17];2] 
+    syncookie_secret: [[u32;17];2],
+    state_table: StateTable,
 }
 
 impl HostConfiguration {
@@ -128,6 +170,7 @@ impl HostConfiguration {
             tcp_timestamp: 0,
             tcp_cookie_time: 0,
             syncookie_secret: [[0;17];2],
+            state_table: StateTable::new(1024 * 1024),
         }
     }
 }

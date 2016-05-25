@@ -12,6 +12,7 @@ clap = "2.4.0"
 lazy_static = "0.2.1"
 yaml-rust = "0.3.2"
 parking_lot = "0.1.2"
+fnv = "1.0.2"
 
 [dependencies.mpsc]
 git = "https://github.com/polachok/mpsc.git"
@@ -26,6 +27,10 @@ features = [ "netmap_with_libs" ]
 git = "https://github.com/polachok/libpnet"
 rev = "1e55befffd630cef33209396d629efc87fe8c74f"
 branch = "syncookied"
+
+[dependencies.intmap]
+git = "https://github.com/polachok/intmap"
+rev = "37c7289c1ecb7af4d28b66b041c81079f9dbdc3e"
 
 [build-dependencies]
 gcc = "0.3.26"

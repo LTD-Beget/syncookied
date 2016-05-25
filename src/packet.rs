@@ -318,7 +318,6 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: MacAddr, pkt: &mut IngressPacket) -
             pkt.tcp_mss = 1460; /* HACK */
             return Action::Reply(IngressPacket::default());
         }
-        /*
         if tcp.get_flags() & TcpFlags::ACK == TcpFlags::ACK {
             let cookie = tcp.get_acknowledgement() - 1;
             let tcp_saddr = tcp.get_source();
@@ -326,14 +325,35 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: MacAddr, pkt: &mut IngressPacket) -
             let ip_saddr = pkt.ipv4_source;
             let ip_daddr = pkt.ipv4_destination;
             let seq = tcp.get_sequence();
-            println!("Check cookie for {}:{} -> {}:{}",
-                     ip_saddr, tcp_saddr, ip_daddr, tcp_daddr,
-                     );
-            let res = cookie::cookie_check(ip_saddr, ip_daddr, tcp_saddr, tcp_daddr, 
-                                 seq, cookie);
-            println!("check result is {:?}", res);
+            let mut action = Action::Drop;
+            let mut new = false;
+
+            ::RoutingTable::with_host_config(ip_daddr, |hc| {
+                if hc.state_table.get_state(ip_saddr, tcp_saddr, tcp_daddr).is_some() {
+                    println!("Have state for {}:{} -> {}:{}, passing", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
+                    action = Action::Forward(fwd_mac)
+                } else {
+                    println!("Check cookie for {}:{} -> {}:{}",
+                             ip_saddr, tcp_saddr, ip_daddr, tcp_daddr,
+                             );
+                    let res = cookie::cookie_check(ip_saddr, ip_daddr, tcp_saddr, tcp_daddr, 
+                                                   seq, cookie);
+                    println!("check result is {:?}", res);
+                    if res.is_some() {
+                        new = true;
+                        action = Action::Forward(fwd_mac);
+                    } else {
+                        println!("Bad cookie, drop");
+                    }
+                }
+            });
+            if new {
+                ::RoutingTable::with_host_config_mut(ip_daddr, |hc| {
+                    hc.state_table.add_state(ip_saddr, tcp_saddr, tcp_daddr, 1);
+                });
+            }
+            return action;
         }
-        */
         Action::Forward(fwd_mac)
     } else {
         println!("Malformed TCP Packet");
