@@ -68,7 +68,7 @@ impl<'a> Sender<'a> {
         println!("[TX#{}] started", self.ring_num);
 
         let mut before = time::Instant::now();
-        let seconds: usize = 10;
+        let seconds: usize = 5;
         let ival = time::Duration::new(seconds as u64, 0);
         let mut rate: usize = 0;
 
@@ -84,6 +84,9 @@ impl<'a> Sender<'a> {
                     /* send one packet */
                     if let Some((slot, buf)) = tx_iter.next() {
                         let pkt = self.chan.recv().expect("Expected RX not to die on us");
+                        if rate < 1000 {
+                            ::RoutingTable::sync_tables();
+                        }
                         Self::send(pkt, slot, buf, &mut self.stats, &mut self.lock,
                                    self.ring_num, self.source_mac);
 

@@ -75,7 +75,8 @@ impl<'a> Receiver<'a> {
         self.update_routing_cache();
 
         let mut before = time::Instant::now();
-        let seconds: usize = 10;
+        let seconds: usize = 2;
+        let mut rate: usize = 0;
         let ival = time::Duration::new(seconds as u64, 0);
 
         loop {
@@ -84,6 +85,9 @@ impl<'a> Receiver<'a> {
                     let mut fw = false;
                     for (slot, buf) in ring.iter() {
                         self.stats.received += 1;
+                        if rate < 1000 {
+                            ::RoutingTable::sync_tables();
+                        }
                         match packet::handle_input(buf, self.mac) {
                             Action::Drop => {
                                 self.stats.dropped += 1;
@@ -125,8 +129,9 @@ impl<'a> Receiver<'a> {
                 }
             }
             if before.elapsed() >= ival {
+                rate = self.stats.received/seconds;
                 println!("[RX#{}]: received: {}Pkts/s, dropped: {}Pkts/s, forwarded: {}Pkts/s, queued: {}Pkts/s",
-                            self.ring_num, self.stats.received/seconds, self.stats.dropped/seconds,
+                            self.ring_num, rate, self.stats.dropped/seconds,
                             self.stats.forwarded/seconds, self.stats.queued/seconds);
                 self.stats.clear();
                 before = time::Instant::now();
