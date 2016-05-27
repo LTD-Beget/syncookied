@@ -34,6 +34,9 @@ lazy_static! {
         }
         data
     };
+    static ref REPLY_TEMPLATE_SLICE: &'static [u8] = {
+        &REPLY_TEMPLATE[12..78]
+    };
 }
 
 #[allow(dead_code)]
@@ -186,7 +189,7 @@ fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) 
 }
 
 fn build_reply_with_template(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> usize {
-    reply[12..].copy_from_slice(&REPLY_TEMPLATE[12..]);
+    reply[12..78].copy_from_slice(&REPLY_TEMPLATE[12..78]);
     build_reply_fast(pkt, source_mac, reply)
 }
 
