@@ -16,11 +16,9 @@ fn cookie_hash(source_addr: u32, dest_addr: u32, source_port: u16, dest_port: u1
                 count: u32, c: u32) -> u32 {
     let mut tmp: [u32; 16 + 5 + SHA_WORKSPACE_WORDS] = unsafe { mem::uninitialized() };
 
-    unsafe {
-        ::RoutingTable::with_host_config(Ipv4Addr::from(dest_addr.to_be()) /* to_be? */, |hc| {
-                ptr::copy_nonoverlapping(hc.syncookie_secret[c as usize].as_ptr(), tmp.as_mut_ptr().offset(4), 17);
-        });
-    }
+    ::RoutingTable::with_host_config(Ipv4Addr::from(dest_addr.to_be()) /* to_be? */, |hc| {
+            tmp[4..4+17].copy_from_slice(&hc.syncookie_secret[c as usize][0..16]);
+    });
     tmp[0] = source_addr;
     tmp[1] = dest_addr;
     tmp[2] = ((source_port as u32) << 16) + dest_port as u32;
@@ -83,11 +81,10 @@ fn check_tcp_syn_cookie(cookie: u32, saddr: u32, daddr: u32,
                         sport: u16, dport: u16, sseq: u32) -> u32 {
     let diff: Wrapping<u32>;
     let mut count: Wrapping<u32> = Wrapping(0);
-    unsafe {
-        ::RoutingTable::with_host_config(Ipv4Addr::from(daddr.to_be()) /* to_be? */, |hc| {
-                count = Wrapping(hc.tcp_cookie_time as u32);
-        });
-    }
+
+    ::RoutingTable::with_host_config(Ipv4Addr::from(daddr.to_be()) /* to_be? */, |hc| {
+        count = Wrapping(hc.tcp_cookie_time as u32);
+    });
 
     let mut cookie = Wrapping(cookie);
     /* Strip away the layers from the cookie */

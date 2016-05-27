@@ -112,23 +112,17 @@ fn u32_to_oct(bits: u32) -> [u8; 4] {
 }
 
 fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> usize {
-    let mut len = 0;
-    let ether_len;
     /* build ethernet packet */
     let mut ether = MutableEthernetPacket::new(reply).unwrap();
 
     ether.set_source(source_mac);
     ether.set_destination(pkt.ether_source);
 
-    ether_len = ether.packet_size();
-    len += ether_len;
-
     /* build ip packet */
     let mut ip = MutableIpv4Packet::new(ether.payload_mut()).unwrap();
     ip.set_source(pkt.ipv4_destination);
     ip.set_destination(pkt.ipv4_source);
     ip.set_checksum(0);
-    len += ip.packet_size();
 
     {
         use std::ptr;
@@ -163,10 +157,8 @@ fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) 
                 ts.set_number(TcpOptionNumbers::TIMESTAMPS);
                 ts.get_length_raw_mut()[0] = 10;
                 let mut stamps = ts.payload_mut();
-                unsafe {
-                    ptr::copy_nonoverlapping::<u8>(u32_to_oct(cookie::synproxy_init_timestamp_cookie(7, 1, 0, my_tcp_time)).as_ptr(), stamps[..].as_mut_ptr(), 4);
-                    ptr::copy_nonoverlapping::<u8>(pkt.tcp_timestamp.as_ptr(), stamps[4..].as_mut_ptr(), 4);
-                }
+                stamps[0..4].copy_from_slice(&u32_to_oct(cookie::synproxy_init_timestamp_cookie(7, 1, 0, my_tcp_time))[0..4]);
+                stamps[4..8].copy_from_slice(&pkt.tcp_timestamp[0..4]);
             }
         }
         let cksum = {
@@ -174,10 +166,8 @@ fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) 
             csum::tcp_checksum(&tcp, pkt.ipv4_destination, pkt.ipv4_source, IpNextHeaderProtocols::Tcp).to_be()
         };
         tcp.set_checksum(cksum);
-        len += tcp.packet_size();
     }
 
-    ip.set_total_length((len - ether_len) as u16);
     let ip_cksum = {
         let ip = ip.to_immutable();
         csum::ip_checksum(&ip).to_be()
@@ -185,7 +175,8 @@ fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) 
     ip.set_checksum(ip_cksum);
 
     //println!("REPLY: {:?}", &ip);
-    len
+    //len
+    78 // ip.get_total_length()
 }
 
 fn build_reply_with_template(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> usize {
