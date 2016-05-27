@@ -17,7 +17,7 @@ fn cookie_hash(source_addr: u32, dest_addr: u32, source_port: u16, dest_port: u1
     let mut tmp: [u32; 16 + 5 + SHA_WORKSPACE_WORDS] = unsafe { mem::uninitialized() };
 
     ::RoutingTable::with_host_config(Ipv4Addr::from(dest_addr.to_be()) /* to_be? */, |hc| {
-            tmp[4..4+17].copy_from_slice(&hc.syncookie_secret[c as usize][0..16]);
+            tmp[4..4+17].copy_from_slice(&hc.syncookie_secret[c as usize][0..17]);
     });
     tmp[0] = source_addr;
     tmp[1] = dest_addr;
