@@ -13,14 +13,14 @@ const MAX_SYNCOOKIE_AGE: u32 = 2;
 
 #[inline]
 fn cookie_hash(source_addr: u32, dest_addr: u32, source_port: u16, dest_port: u16,
-                count: u32, c: u32, secret: &[[u32;17];2]) -> u32 {
+                count: u32, secret: &[u32;17]) -> u32 {
     let mut tmp: [u32; 16 + 5 + SHA_WORKSPACE_WORDS] = unsafe { mem::uninitialized() };
 
-    tmp[4..4+17].copy_from_slice(&secret[c as usize][0..17]);
     tmp[0] = source_addr;
     tmp[1] = dest_addr;
     tmp[2] = ((source_port as u32) << 16) + dest_port as u32;
     tmp[3] = count;
+    tmp[4..4+17].copy_from_slice(&secret[0..17]);
     unsafe {
         //::sha1::sha1_transform_ssse3(tmp.as_mut_ptr().offset(16), tmp.as_ptr() as *const u8, 1);
         ::sha1::sha1_transform_avx(tmp.as_mut_ptr().offset(16), tmp.as_ptr() as *const u8, 1);
@@ -44,9 +44,9 @@ fn secure_tcp_syn_cookie(source_addr: u32, dest_addr: u32, source_port: u16,
      * As an extra hack, we add a small "data" value that encodes the
      * MSS into the second hash value.
      */
-    (Wrapping(cookie_hash(source_addr, dest_addr, source_port, dest_port, 0, 0, secret))
+    (Wrapping(cookie_hash(source_addr, dest_addr, source_port, dest_port, 0, &secret[0]))
             + Wrapping(sseq) + Wrapping(tcp_cookie_time << COOKIEBITS)
-            + ((Wrapping(cookie_hash(source_addr, dest_addr, source_port, dest_port, tcp_cookie_time, 1, secret)) + Wrapping(data)) & Wrapping(COOKIEMASK))).0
+            + ((Wrapping(cookie_hash(source_addr, dest_addr, source_port, dest_port, tcp_cookie_time, &secret[1])) + Wrapping(data)) & Wrapping(COOKIEMASK))).0
 }
 
 #[inline]
@@ -91,7 +91,7 @@ fn check_tcp_syn_cookie(cookie: u32, saddr: u32, daddr: u32,
 
     let mut cookie = Wrapping(cookie);
     /* Strip away the layers from the cookie */
-    cookie -= Wrapping(cookie_hash(saddr, daddr, sport, dport, 0, 0, &secret)) + Wrapping(sseq);
+    cookie -= Wrapping(cookie_hash(saddr, daddr, sport, dport, 0, &secret[0])) + Wrapping(sseq);
 
     /* Cookie is now reduced to (count * 2^24) ^ (hash % 2^24) */
     diff = (count - (cookie >> COOKIEBITS as usize)) & Wrapping(0xffffffff >> COOKIEBITS);
@@ -100,7 +100,7 @@ fn check_tcp_syn_cookie(cookie: u32, saddr: u32, daddr: u32,
         //println!("COOKIE TOO OLD: {} NOW: {} COOKIE: {}", diff, count, cookie_time);
         return 0xffffffff;
     }
-    ((cookie - Wrapping(cookie_hash(saddr, daddr, sport, dport, (count - diff).0, 1, &secret))) & Wrapping(COOKIEMASK)).0
+    ((cookie - Wrapping(cookie_hash(saddr, daddr, sport, dport, (count - diff).0, &secret[1]))) & Wrapping(COOKIEMASK)).0
 }
 
 #[inline]
