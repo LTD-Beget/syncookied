@@ -126,14 +126,19 @@ fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) 
 
     {
         use std::ptr;
+        use std::mem;
         /* build tcp packet */
         let mut cookie_time = 0;
-        ::RoutingTable::with_host_config(pkt.ipv4_destination, |hc| cookie_time = hc.tcp_cookie_time);
-
+        let mut secret: [[u32;17];2] = unsafe { mem::uninitialized() };
+        ::RoutingTable::with_host_config(pkt.ipv4_destination, |hc| {
+            cookie_time = hc.tcp_cookie_time;
+            secret[0].copy_from_slice(&hc.syncookie_secret[0][0..17]);
+            secret[1].copy_from_slice(&hc.syncookie_secret[1][0..17]);
+        });
         let (seq_num, mss_val) = cookie::generate_cookie_init_sequence(
             pkt.ipv4_source, pkt.ipv4_destination,
             pkt.tcp_source, pkt.tcp_destination, pkt.tcp_sequence,
-            pkt.tcp_mss, cookie_time as u32);
+            pkt.tcp_mss, cookie_time as u32, &secret);
         let mut tcp = MutableTcpPacket::new(&mut ip.payload_mut()[0..20 + 24]).unwrap();
         tcp.set_source(pkt.tcp_destination);
         tcp.set_destination(pkt.tcp_source);
@@ -213,13 +218,20 @@ pub fn build_reply(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -
 
     {
         use std::ptr;
+        use std::mem;
         /* build tcp packet */
         let mut cookie_time = 0;
-        ::RoutingTable::with_host_config(pkt.ipv4_destination, |hc| cookie_time = hc.tcp_cookie_time);
+        let mut secret: [[u32;17];2] = unsafe { mem::uninitialized() };
+
+        ::RoutingTable::with_host_config(pkt.ipv4_destination, |hc| {
+            cookie_time = hc.tcp_cookie_time;
+            secret[0].copy_from_slice(&hc.syncookie_secret[0][0..17]);
+            secret[1].copy_from_slice(&hc.syncookie_secret[1][0..17]);
+        });
         let (seq_num, mss_val) = cookie::generate_cookie_init_sequence(
             pkt.ipv4_source, pkt.ipv4_destination,
             pkt.tcp_source, pkt.tcp_destination, pkt.tcp_sequence,
-            pkt.tcp_mss, cookie_time as u32);
+            pkt.tcp_mss, cookie_time as u32, &secret);
         let mut tcp = MutableTcpPacket::new(&mut ip.payload_mut()[0..20 + 24]).unwrap();
         tcp.set_source(pkt.tcp_destination);
         tcp.set_destination(pkt.tcp_source);
