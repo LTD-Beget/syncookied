@@ -44,13 +44,13 @@ use netmap::{Direction,NetmapDescriptor};
 
 lazy_static! {
     /* maps public IP to tcp parameters */
-    static ref GLOBAL_HOST_CONFIGURATION: RwLock<BTreeMap<u32, HostConfiguration>> = {
+    static ref GLOBAL_HOST_CONFIGURATION: RwLock<BTreeMap<Ipv4Addr, HostConfiguration>> = {
         let hm = BTreeMap::new();
         RwLock::new(hm)
     };
 }
 
-thread_local!(pub static LOCAL_ROUTING_TABLE: RefCell<BTreeMap<u32, HostConfiguration>> = {
+thread_local!(pub static LOCAL_ROUTING_TABLE: RefCell<BTreeMap<Ipv4Addr, HostConfiguration>> = {
     let hm = BTreeMap::new();
     RefCell::new(hm)
 });
@@ -100,12 +100,12 @@ impl RoutingTable {
         let host_conf = HostConfiguration::new(mac);
         let mut w = GLOBAL_HOST_CONFIGURATION.write();
 
-        w.insert(u32::from(ip), host_conf);
+        w.insert(ip, host_conf);
     }
 
-    fn get_ips() -> Vec<Ipv4Addr> {
+    pub fn get_ips() -> Vec<Ipv4Addr> {
         let r = GLOBAL_HOST_CONFIGURATION.read();
-        r.keys().map(|u| Ipv4Addr::from(*u)).collect()
+        r.keys().cloned().collect()
     }
 
     pub fn sync_tables() {
@@ -113,7 +113,7 @@ impl RoutingTable {
             let ips = ::RoutingTable::get_ips();
             let mut cache = rt.borrow_mut();
             for ip in ips.iter() {
-                ::RoutingTable::with_host_config_global(*ip, |hc| { cache.insert(u32::from(*ip), hc.to_owned()); });
+                ::RoutingTable::with_host_config_global(*ip, |hc| { cache.insert(*ip, hc.to_owned()); });
             }
         })
     }
@@ -121,7 +121,7 @@ impl RoutingTable {
     pub fn with_host_config<F>(ip: Ipv4Addr, mut f: F) -> Option<()> where F: FnMut(&HostConfiguration) {
         LOCAL_ROUTING_TABLE.with(|rt| {
             let r = rt.borrow();
-            if let Some(hc) = r.get(&ip.into()) {
+            if let Some(hc) = r.get(&ip) {
                 f(hc);
                 Some(())
             } else {
@@ -133,7 +133,7 @@ impl RoutingTable {
 
     pub fn with_host_config_global<F>(ip: Ipv4Addr, mut f: F) -> Option<()> where F: FnMut(&HostConfiguration) {
         let r = GLOBAL_HOST_CONFIGURATION.read();
-        if let Some(hc) = r.get(&ip.into()) {
+        if let Some(hc) = r.get(&ip) {
             f(hc);
             Some(())
         } else {
@@ -144,7 +144,7 @@ impl RoutingTable {
 
     pub fn with_host_config_mut<F>(ip: Ipv4Addr, mut f: F) -> Option<()> where F: FnMut(&mut HostConfiguration) {
         let mut w = GLOBAL_HOST_CONFIGURATION.write();
-        if let Some(hc) = w.get_mut(&ip.into()) {
+        if let Some(hc) = w.get_mut(&ip) {
             f(hc);
             Some(())
         } else {
