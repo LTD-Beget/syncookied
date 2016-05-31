@@ -98,12 +98,7 @@ pub fn handle_input(packet_data: &[u8], mac: MacAddr) -> Action {
 
 #[inline]
 pub fn handle_reply(pkt: IngressPacket, source_mac: MacAddr, tx_slice: &mut [u8]) -> Option<usize> {
-    let len = tx_slice.len();
-    if len < MIN_REPLY_BUF_LEN {
-        None
-    } else {
-        Some(build_reply_with_template(&pkt, source_mac, tx_slice))
-    }
+    Some(build_reply_with_template(&pkt, source_mac, tx_slice))
 }
 
 #[inline]
