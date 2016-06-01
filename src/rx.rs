@@ -34,7 +34,8 @@ impl RxStats {
 pub struct Receiver<'a> {
     ring_num: u16,
     cpu: usize,
-    chan: mpsc::SyncSender<OutgoingPacket>,
+    chan_reply: mpsc::SyncSender<OutgoingPacket>,
+    chan_fwd: mpsc::SyncSender<OutgoingPacket>,
     netmap: &'a mut NetmapDescriptor,
     lock: Arc<AtomicUsize>,
     stats: RxStats,
@@ -42,12 +43,13 @@ pub struct Receiver<'a> {
 }
 
 impl<'a> Receiver<'a> {
-    pub fn new(ring_num: u16, cpu: usize, chan: mpsc::SyncSender<OutgoingPacket>,
+    pub fn new(ring_num: u16, cpu: usize, chan_fwd: mpsc::SyncSender<OutgoingPacket>, chan_reply: mpsc::SyncSender<OutgoingPacket>,
                netmap: &'a mut NetmapDescriptor, lock: Arc<AtomicUsize>, mac: MacAddr) -> Self {
         Receiver {
             ring_num: ring_num,
             cpu: cpu,
-            chan: chan,
+            chan_fwd: chan_fwd,
+            chan_reply: chan_reply,
             netmap: netmap,
             lock: lock,
             stats: RxStats::empty(),
@@ -103,13 +105,13 @@ impl<'a> Receiver<'a> {
                                     ring_num, slot_ptr, buf_ptr, slot.get_buf_idx());
 */
                                 to_forward.fetch_add(1, Ordering::SeqCst);
-                                self.chan.send(OutgoingPacket::Forwarded((slot_ptr, buf_ptr, fwd_mac))).unwrap();
+                                self.chan_fwd.send(OutgoingPacket::Forwarded((slot_ptr, buf_ptr, fwd_mac))).unwrap();
                                 self.stats.forwarded += 1;
                                 fw = true;
                             },
                             Action::Reply(packet) => {
                                 self.stats.queued += 1;
-                                self.chan.send(OutgoingPacket::Ingress(packet)).unwrap();
+                                self.chan_reply.send(OutgoingPacket::Ingress(packet)).unwrap();
                             },
                         }
                     }

@@ -219,6 +219,7 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, uptime_
         for ring in 0..rx_count {
             let ring = ring;
             let (tx, rx) = mpsc::sync_channel(2 * 1024 * 1024);
+            let (f_tx, f_rx) = mpsc::sync_channel(2 * 1024 * 1024);
             let pair = Arc::new(AtomicUsize::new(0));
             let rx_pair = pair.clone();
 
@@ -232,11 +233,12 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, uptime_
                         nm.clone_ring(ring, Direction::Input).unwrap()
                     };
                     let cpu = ring as usize;
-                    rx::Receiver::new(ring, cpu, tx, &mut ring_nm, rx_pair, rx_mac.clone()).run();
+                    rx::Receiver::new(ring, cpu, f_tx, tx, &mut ring_nm, rx_pair, rx_mac.clone()).run();
                 });
             }
 
             /* Start an ARP thread to keep switch from forgetting about us */
+            /*
             if multi_if && ring == 0 {
                     let rx_nm = rx_nm.clone();
 
@@ -251,6 +253,23 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, uptime_
                     arp::Sender::new(ring, cpu, &mut ring_nm, rx_mac.clone(), Ipv4Addr::new(185,50,25,2), Ipv4Addr::new(185,50,25,1)).run();
                 });
             }
+            */
+
+            /* second half */
+            {
+                let f_tx_nm = rx_nm.clone();
+                let pair = pair.clone();
+                scope.spawn(move || {
+                    println!("Starting TX thread for ring {} at {}", ring, rx_iface);
+                    let mut ring_nm = {
+                        let nm = f_tx_nm.lock().unwrap();
+                        nm.clone_ring(ring, Direction::Output).unwrap()
+                    };
+                    let cpu = ring as usize; /* HACK */
+                    tx::Sender::new(ring, cpu, f_rx, &mut ring_nm, pair, rx_mac.clone()).run();
+                });
+            }
+
 
             let tx_nm = tx_nm.clone();
             scope.spawn(move || {
