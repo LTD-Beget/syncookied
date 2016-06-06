@@ -97,8 +97,8 @@ pub fn handle_input(packet_data: &[u8], mac: MacAddr) -> Action {
 }
 
 #[inline]
-pub fn handle_reply(pkt: IngressPacket, source_mac: MacAddr, tx_slice: &mut [u8]) -> Option<usize> {
-    Some(build_reply_with_template(&pkt, source_mac, tx_slice))
+pub fn handle_reply(pkt: &IngressPacket, source_mac: MacAddr, tx_slice: &mut [u8]) -> Option<usize> {
+    Some(build_reply_with_template(pkt, source_mac, tx_slice))
 }
 
 #[inline]
@@ -182,6 +182,9 @@ fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) 
 fn build_reply_with_template(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> usize {
     reply[12..MIN_REPLY_BUF_LEN].copy_from_slice(&REPLY_TEMPLATE[12..MIN_REPLY_BUF_LEN]);
     build_reply_fast(pkt, source_mac, reply)
+    //reply[12..78].copy_from_slice(&REPLY_TEMPLATE[12..78]);
+    //build_reply_fast(pkt, source_mac, reply)
+    //build_reply_with_builder(pkt, source_mac, reply)
 }
 
 pub fn build_reply(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> usize {

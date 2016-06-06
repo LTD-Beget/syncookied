@@ -233,7 +233,7 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, uptime_
                         let nm = rx_nm.lock().unwrap();
                         nm.clone_ring(ring, Direction::Input).unwrap()
                     };
-                    let cpu = ring as usize;
+                    let cpu = 12 + ring as usize;
                     rx::Receiver::new(ring, cpu, f_tx, tx, &mut ring_nm, rx_pair, rx_mac.clone()).run();
                 });
             }
@@ -257,6 +257,7 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, uptime_
             */
 
             /* second half */
+/*
             {
                 let f_tx_nm = rx_nm.clone();
                 let pair = pair.clone();
@@ -270,7 +271,7 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, uptime_
                     tx::Sender::new(ring, cpu, f_rx, &mut ring_nm, pair, rx_mac.clone()).run();
                 });
             }
-
+*/
 
             let tx_nm = tx_nm.clone();
             scope.spawn(move || {
@@ -279,7 +280,7 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, uptime_
                     let nm = tx_nm.lock().unwrap();
                     nm.clone_ring(ring, Direction::Output).unwrap()
                 };
-                let cpu = rx_count as usize + ring as usize; /* HACK */
+                let cpu = 12 + /* rx_count as usize + */ ring as usize; /* HACK */
                 tx::Sender::new(ring, cpu, rx, &mut ring_nm, pair, tx_mac).run();
             });
         }

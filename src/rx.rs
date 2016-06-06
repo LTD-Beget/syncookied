@@ -108,23 +108,29 @@ impl<'a> Receiver<'a> {
                                     ring_num, slot_ptr, buf_ptr, slot.get_buf_idx());
 */
                                 to_forward.fetch_add(1, Ordering::SeqCst);
-                                self.chan_fwd.push(OutgoingPacket::Forwarded((slot_ptr, buf_ptr, fwd_mac)));
-                                self.stats.forwarded += 1;
+                                //self.chan_fwd.push(OutgoingPacket::Forwarded((slot_ptr, buf_ptr, fwd_mac)));
+
+                                match self.chan_reply.try_push(OutgoingPacket::Forwarded((slot_ptr, buf_ptr, fwd_mac))) {
+                                    None => { self.stats.forwarded += 1 ; fw = true; },
+                                    Some(_) => { self.stats.failed += 1 },
+				}
+                                //self.stats.forwarded += 1;
                                 fw = true;
                             },
                             Action::Reply(packet) => {
                                 use mpsc::TrySendError;
                                 match self.chan_reply.try_push(OutgoingPacket::Ingress(packet)) {
                                     None => self.stats.queued += 1,
-                                    Some(pkt) => {
+                                    Some(_) => {
                                         self.stats.overflow += 1;
-                                        match self.chan_fwd.try_push(pkt) {
+                                        /*match self.chan_fwd.try_push(pkt) {
                                             None => self.stats.queued += 1,
-                                            Some(_) => {
+                                            Some(_) => { */
                                                 self.stats.failed += 1;
                                                 thread::sleep(Duration::new(0, 500));
+/*
                                             },
-                                        };
+                                        }; */
                                     },
                                 }
                             },

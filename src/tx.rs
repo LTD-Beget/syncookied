@@ -84,23 +84,33 @@ impl<'a> Sender<'a> {
 
                     /* send one packet */
                     if let Some((slot, buf)) = tx_iter.next() {
-                        match self.chan.try_pop() {
-                            None => thread::sleep(Duration::new(0, 500)),
-                            Some(pkt) => {
-                                if rate < 1000 {
+                        let stats = &mut self.stats;
+                        let lock = &mut self.lock;
+                        let ring_num = self.ring_num;
+                        let source_mac = self.source_mac;
+                        match self.chan.try_pop_with(|pkt| {
+                            if rate < 1000 {
                                     ::RoutingTable::sync_tables();
                                 }
-                                Self::send(pkt, slot, buf, &mut self.stats, &mut self.lock,
-                                           self.ring_num, self.source_mac);
-                            },
+                                Self::send(pkt, slot, buf, stats, lock,
+                                           ring_num, source_mac);
+                            }) {
+                            None => thread::sleep(Duration::new(0, 200)),
+                            Some(()) => { },
                         }
                     }
                     /* try to send more if we have any (non-blocking) */
                     for (slot, buf) in tx_iter {
-                        match self.chan.try_pop() {
-                            Some(pkt) => Self::send(pkt, slot, buf, &mut self.stats, &mut self.lock,
-                                                  self.ring_num, self.source_mac),
-                            None => break,
+                        let stats = &mut self.stats;
+                        let lock = &mut self.lock;
+                        let ring_num = self.ring_num;
+                        let source_mac = self.source_mac;
+                        match self.chan.try_pop_with(|pkt| {
+                            Self::send(pkt, slot, buf, stats, lock,
+                                                  ring_num, source_mac)
+                        }) {
+                            None => thread::sleep(Duration::new(0, 200)),
+                            Some(()) => { },
                         }
 
 /*
@@ -131,11 +141,11 @@ impl<'a> Sender<'a> {
     }
 
     #[inline]
-    fn send(pkt: OutgoingPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxStats,
+    fn send(pkt: &OutgoingPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxStats,
             lock: &mut Arc<AtomicUsize>, ring_num: u16, source_mac: MacAddr) {
         match pkt {
-            OutgoingPacket::Ingress(pkt) => {
-                if let Some(len) = packet::handle_reply(pkt, source_mac, buf) {
+            &OutgoingPacket::Ingress(ref pkt) => {
+                if let Some(len) = packet::handle_reply(&pkt, source_mac, buf) {
                     //println!("[TX#{}] SENDING PACKET\n", ring_num);
                     slot.set_flags(0); //netmap::NS_BUF_CHANGED as u16 /* | netmap::NS_REPORT as u16 */);
                     slot.set_len(len as u16);
@@ -144,7 +154,7 @@ impl<'a> Sender<'a> {
                     stats.failed += 1;
                 }
             },
-            OutgoingPacket::Forwarded((slot_ptr, buf_ptr, destination_mac)) => {
+            &OutgoingPacket::Forwarded((slot_ptr, buf_ptr, destination_mac)) => {
                 use std::slice;
                 /* swap buffers (zero copy) */
                 let rx_slot: &mut TxSlot = unsafe { mem::transmute(slot_ptr as *mut TxSlot) };
