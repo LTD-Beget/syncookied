@@ -91,7 +91,7 @@ impl NetmapSlot for TxSlot {
 
     #[inline]
     fn set_flags(&mut self, flag: u16) {
-        self.0.flags |= flag;
+        self.0.flags = flag;
     }
 
     #[inline]

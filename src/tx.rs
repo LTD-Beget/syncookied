@@ -135,7 +135,7 @@ impl<'a> Sender<'a> {
             OutgoingPacket::Ingress(pkt) => {
                 if let Some(len) = packet::handle_reply(pkt, source_mac, buf) {
                     //println!("[TX#{}] SENDING PACKET\n", ring_num);
-                    slot.set_flags(netmap::NS_BUF_CHANGED as u16 /* | netmap::NS_REPORT as u16 */);
+                    slot.set_flags(0); //netmap::NS_BUF_CHANGED as u16 /* | netmap::NS_REPORT as u16 */);
                     slot.set_len(len as u16);
                     stats.sent += 1;
                 } else {

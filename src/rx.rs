@@ -19,6 +19,8 @@ struct RxStats {
     pub dropped: usize,
     pub forwarded: usize,
     pub queued: usize,
+    pub overflow: usize,
+    pub failed: usize,
 }
 
 impl RxStats {
@@ -110,8 +112,19 @@ impl<'a> Receiver<'a> {
                                 fw = true;
                             },
                             Action::Reply(packet) => {
-                                self.stats.queued += 1;
-                                self.chan_reply.send(OutgoingPacket::Ingress(packet)).unwrap();
+                                use mpsc::TrySendError;
+                                match self.chan_reply.try_send(OutgoingPacket::Ingress(packet)) {
+                                    Ok(_) => self.stats.queued += 1,
+                                    Err(TrySendError::Full(pkt)) => {
+                                        self.stats.overflow += 1;
+                                        match self.chan_fwd.try_send(pkt) {
+                                            Ok(_) => self.stats.queued += 1,
+                                            Err(TrySendError::Full(pkt)) => self.stats.failed += 1,
+                                            Err(_) => {},
+                                        };
+                                    },
+                                    Err(_) => {},
+                                }
                             },
                         }
                     }
@@ -132,9 +145,10 @@ impl<'a> Receiver<'a> {
             }
             if before.elapsed() >= ival {
                 rate = self.stats.received/seconds;
-                println!("[RX#{}]: received: {}Pkts/s, dropped: {}Pkts/s, forwarded: {}Pkts/s, queued: {}Pkts/s",
+                println!("[RX#{}]: received: {}Pkts/s, dropped: {}Pkts/s, forwarded: {}Pkts/s, queued: {}Pkts/s, overflowed: {}Pkts/s, failed: {}Pkts/s",
                             self.ring_num, rate, self.stats.dropped/seconds,
-                            self.stats.forwarded/seconds, self.stats.queued/seconds);
+                            self.stats.forwarded/seconds, self.stats.queued/seconds,
+                            self.stats.overflow/seconds, self.stats.failed/seconds);
                 self.stats.clear();
                 before = time::Instant::now();
                 self.update_routing_cache();
