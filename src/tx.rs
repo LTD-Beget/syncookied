@@ -84,13 +84,16 @@ impl<'a> Sender<'a> {
 
                     /* send one packet */
                     if let Some((slot, buf)) = tx_iter.next() {
-                        let pkt = self.chan.pop();
-                        if rate < 1000 {
-                            ::RoutingTable::sync_tables();
+                        match self.chan.try_pop() {
+                            None => thread::sleep(Duration::new(0, 500)),
+                            Some(pkt) => {
+                                if rate < 1000 {
+                                    ::RoutingTable::sync_tables();
+                                }
+                                Self::send(pkt, slot, buf, &mut self.stats, &mut self.lock,
+                                           self.ring_num, self.source_mac);
+                            },
                         }
-                        Self::send(pkt, slot, buf, &mut self.stats, &mut self.lock,
-                                   self.ring_num, self.source_mac);
-
                     }
                     /* try to send more if we have any (non-blocking) */
                     for (slot, buf) in tx_iter {
@@ -99,7 +102,6 @@ impl<'a> Sender<'a> {
                                                   self.ring_num, self.source_mac),
                             None => break,
                         }
-
 
 /*
                         if rate <= 1000 {
