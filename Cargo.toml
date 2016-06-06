@@ -13,6 +13,7 @@ lazy_static = "0.2.1"
 yaml-rust = "0.3.2"
 parking_lot = "0.1.2"
 fnv = "1.0.2"
+bounded-spsc-queue = "0.1.2"
 
 [dependencies.mpsc]
 git = "https://github.com/polachok/mpsc.git"

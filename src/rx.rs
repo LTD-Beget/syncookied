@@ -1,6 +1,7 @@
 use std::time::{self,Duration};
 use std::thread;
 use ::mpsc;
+use ::spsc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use ::netmap::{self, NetmapDescriptor, RxSlot};
@@ -36,8 +37,8 @@ impl RxStats {
 pub struct Receiver<'a> {
     ring_num: u16,
     cpu: usize,
-    chan_reply: mpsc::SyncSender<OutgoingPacket>,
-    chan_fwd: mpsc::SyncSender<OutgoingPacket>,
+    chan_reply: spsc::Producer<OutgoingPacket>,
+    chan_fwd: spsc::Producer<OutgoingPacket>,
     netmap: &'a mut NetmapDescriptor,
     lock: Arc<AtomicUsize>,
     stats: RxStats,
@@ -45,7 +46,7 @@ pub struct Receiver<'a> {
 }
 
 impl<'a> Receiver<'a> {
-    pub fn new(ring_num: u16, cpu: usize, chan_fwd: mpsc::SyncSender<OutgoingPacket>, chan_reply: mpsc::SyncSender<OutgoingPacket>,
+    pub fn new(ring_num: u16, cpu: usize, chan_fwd: spsc::Producer<OutgoingPacket>, chan_reply: spsc::Producer<OutgoingPacket>,
                netmap: &'a mut NetmapDescriptor, lock: Arc<AtomicUsize>, mac: MacAddr) -> Self {
         Receiver {
             ring_num: ring_num,
@@ -107,23 +108,21 @@ impl<'a> Receiver<'a> {
                                     ring_num, slot_ptr, buf_ptr, slot.get_buf_idx());
 */
                                 to_forward.fetch_add(1, Ordering::SeqCst);
-                                self.chan_fwd.send(OutgoingPacket::Forwarded((slot_ptr, buf_ptr, fwd_mac))).unwrap();
+                                self.chan_fwd.push(OutgoingPacket::Forwarded((slot_ptr, buf_ptr, fwd_mac)));
                                 self.stats.forwarded += 1;
                                 fw = true;
                             },
                             Action::Reply(packet) => {
                                 use mpsc::TrySendError;
-                                match self.chan_reply.try_send(OutgoingPacket::Ingress(packet)) {
-                                    Ok(_) => self.stats.queued += 1,
-                                    Err(TrySendError::Full(pkt)) => {
+                                match self.chan_reply.try_push(OutgoingPacket::Ingress(packet)) {
+                                    None => self.stats.queued += 1,
+                                    Some(pkt) => {
                                         self.stats.overflow += 1;
-                                        match self.chan_fwd.try_send(pkt) {
-                                            Ok(_) => self.stats.queued += 1,
-                                            Err(TrySendError::Full(pkt)) => self.stats.failed += 1,
-                                            Err(_) => {},
+                                        match self.chan_fwd.try_push(pkt) {
+                                            None => self.stats.queued += 1,
+                                            Some(pkt) => self.stats.failed += 1,
                                         };
                                     },
-                                    Err(_) => {},
                                 }
                             },
                         }

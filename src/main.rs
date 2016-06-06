@@ -10,6 +10,7 @@ extern crate parking_lot;
 extern crate mpsc;
 extern crate intmap;
 extern crate fnv;
+extern crate bounded_spsc_queue as spsc;
 
 use std::fmt;
 use std::cell::RefCell;
@@ -218,8 +219,8 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, uptime_
 
         for ring in 0..rx_count {
             let ring = ring;
-            let (tx, rx) = mpsc::sync_channel(4 * 1024 * 1024);
-            let (f_tx, f_rx) = mpsc::sync_channel(4 * 1024 * 1024);
+            let (tx, rx) = spsc::make(4 * 1024 * 1024);
+            let (f_tx, f_rx) = spsc::make(4 * 1024 * 1024);
             let pair = Arc::new(AtomicUsize::new(0));
             let rx_pair = pair.clone();
 

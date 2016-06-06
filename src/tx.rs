@@ -2,6 +2,7 @@ use std::mem;
 use std::time::{self,Duration};
 use std::thread;
 use ::mpsc;
+use ::spsc;
 use ::mpsc::TryRecvError;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -33,7 +34,7 @@ impl TxStats {
 pub struct Sender<'a> {
     ring_num: u16,
     cpu: usize,
-    chan: mpsc::Receiver<OutgoingPacket>,
+    chan: spsc::Consumer<OutgoingPacket>,
     netmap: &'a mut NetmapDescriptor,
     lock: Arc<AtomicUsize>,
     source_mac: MacAddr,
@@ -41,7 +42,7 @@ pub struct Sender<'a> {
 }
 
 impl<'a> Sender<'a> {
-    pub fn new(ring_num: u16, cpu: usize, chan: mpsc::Receiver<OutgoingPacket>,
+    pub fn new(ring_num: u16, cpu: usize, chan: spsc::Consumer<OutgoingPacket>,
             netmap: &'a mut NetmapDescriptor, lock: Arc<AtomicUsize>,
             source_mac: MacAddr) -> Sender<'a> {
         Sender {
@@ -83,7 +84,7 @@ impl<'a> Sender<'a> {
 
                     /* send one packet */
                     if let Some((slot, buf)) = tx_iter.next() {
-                        let pkt = self.chan.recv().expect("Expected RX not to die on us");
+                        let pkt = self.chan.pop();
                         if rate < 1000 {
                             ::RoutingTable::sync_tables();
                         }
@@ -93,11 +94,10 @@ impl<'a> Sender<'a> {
                     }
                     /* try to send more if we have any (non-blocking) */
                     for (slot, buf) in tx_iter {
-                        match self.chan.try_recv() {
-                            Ok(pkt) => Self::send(pkt, slot, buf, &mut self.stats, &mut self.lock,
+                        match self.chan.try_pop() {
+                            Some(pkt) => Self::send(pkt, slot, buf, &mut self.stats, &mut self.lock,
                                                   self.ring_num, self.source_mac),
-                            Err(TryRecvError::Empty) => break,
-                            Err(TryRecvError::Disconnected) => panic!("Expected RX not to die on us"),
+                            None => break,
                         }
 
 
