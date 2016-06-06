@@ -13,11 +13,11 @@ use pnet::util::MacAddr;
 use ::cookie;
 use ::csum;
 
-pub const MIN_REPLY_BUF_LEN: usize = 78;
+pub const MIN_REPLY_BUF_LEN: usize = 74;
 
 lazy_static! {
     static ref REPLY_TEMPLATE: Vec<u8> = {
-        let mut data: Vec<u8> = vec![0;78];
+        let mut data: Vec<u8> = vec![0;MIN_REPLY_BUF_LEN];
         /* prepare data common to all packets beforehand */
         {
             let pkt = IngressPacket {
@@ -35,7 +35,7 @@ lazy_static! {
         data
     };
     static ref REPLY_TEMPLATE_SLICE: &'static [u8] = {
-        &REPLY_TEMPLATE[12..78]
+        &REPLY_TEMPLATE[12..MIN_REPLY_BUF_LEN]
     };
 }
 
@@ -134,7 +134,7 @@ fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) 
             pkt.ipv4_source, pkt.ipv4_destination,
             pkt.tcp_source, pkt.tcp_destination, pkt.tcp_sequence,
             pkt.tcp_mss, cookie_time as u32, &secret);
-        let mut tcp = MutableTcpPacket::new(&mut ip.payload_mut()[0..20 + 24]).unwrap();
+        let mut tcp = MutableTcpPacket::new(&mut ip.payload_mut()[0..20 + 20]).unwrap();
         tcp.set_source(pkt.tcp_destination);
         tcp.set_destination(pkt.tcp_source);
         tcp.set_sequence(seq_num);
@@ -176,11 +176,11 @@ fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) 
 
     //println!("REPLY: {:?}", &ip);
     //len
-    78 // ip.get_total_length()
+    MIN_REPLY_BUF_LEN // ip.get_total_length()
 }
 
 fn build_reply_with_template(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> usize {
-    reply[12..78].copy_from_slice(&REPLY_TEMPLATE[12..78]);
+    reply[12..MIN_REPLY_BUF_LEN].copy_from_slice(&REPLY_TEMPLATE[12..MIN_REPLY_BUF_LEN]);
     build_reply_fast(pkt, source_mac, reply)
 }
 
@@ -227,14 +227,14 @@ pub fn build_reply(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -
             pkt.ipv4_source, pkt.ipv4_destination,
             pkt.tcp_source, pkt.tcp_destination, pkt.tcp_sequence,
             pkt.tcp_mss, cookie_time as u32, &secret);
-        let mut tcp = MutableTcpPacket::new(&mut ip.payload_mut()[0..20 + 24]).unwrap();
+        let mut tcp = MutableTcpPacket::new(&mut ip.payload_mut()[0..20 + 20]).unwrap();
         tcp.set_source(pkt.tcp_destination);
         tcp.set_destination(pkt.tcp_source);
         tcp.set_sequence(seq_num);
         tcp.set_acknowledgement(pkt.tcp_sequence + 1);
         tcp.set_window(65535);
         tcp.set_flags(TcpFlags::SYN | TcpFlags::ACK);
-        tcp.set_data_offset(11);
+        tcp.set_data_offset(10);
         tcp.set_checksum(0);
         {
             let options = tcp.get_options_raw_mut();
@@ -270,8 +270,12 @@ pub fn build_reply(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -
                     ptr::copy_nonoverlapping::<u8>(pkt.tcp_timestamp.as_ptr(), stamps[4..].as_mut_ptr(), 4);
                 }
             }
+            { /* Padding */
+                let mut ts = MutableTcpOptionPacket::new(&mut options[16..17]).unwrap();
+                ts.set_number(TcpOptionNumbers::NOP);
+            }
             { /* WSCALE */
-                let mut ws = MutableTcpOptionPacket::new(&mut options[16..19]).unwrap();
+                let mut ws = MutableTcpOptionPacket::new(&mut options[17..20]).unwrap();
                 ws.set_number(TcpOptionNumbers::WSCALE);
                 ws.get_length_raw_mut()[0] = 3;
                 ws.set_data(&[7]);

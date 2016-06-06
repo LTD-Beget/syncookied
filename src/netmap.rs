@@ -186,7 +186,6 @@ impl<'a> Iterator for RxSlotIter<'a> {
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         self.ring.0.cur = self.cur;
-        self.ring.0.head = self.ring.0.cur;
 
         if self.ring.is_empty() {
             return None;
@@ -321,7 +320,6 @@ impl<'a> Iterator for TxSlotIter<'a> {
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         self.ring.0.cur = self.cur;
-        self.ring.0.head = self.ring.0.cur;
 
         if self.ring.is_empty() {
             return None;
