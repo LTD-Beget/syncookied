@@ -327,7 +327,7 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: MacAddr, pkt: &mut IngressPacket) -
 
             ::RoutingTable::with_host_config(ip_daddr, |hc| {
                 if hc.state_table.get_state(ip_saddr, tcp_saddr, tcp_daddr).is_some() {
-                    println!("Have state for {}:{} -> {}:{}, passing", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
+                    //println!("Have state for {}:{} -> {}:{}, passing", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
                     action = Action::Forward(fwd_mac)
                 } else {
                     //println!("State for {}:{} -> {}:{} not found", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
@@ -390,14 +390,18 @@ fn handle_ipv4_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket) -> Act
 
 #[inline]
 fn handle_ether_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket, mac: MacAddr) -> Action {
-    let mac_dest = ethernet.get_destination();
+    let bytes = ethernet.packet();
+    let mut tmp_mac_arr = [0; 6];
+    tmp_mac_arr.copy_from_slice(&bytes[0..6]);
+    let mac_dest = MacAddr(tmp_mac_arr);
 
     if mac_dest != mac {
         return Action::Drop;
     }
     match ethernet.get_ethertype() {
         EtherTypes::Ipv4 => {
-            pkt.ether_source = ethernet.get_source();
+            tmp_mac_arr.copy_from_slice(&bytes[6..12]);
+            pkt.ether_source = MacAddr(tmp_mac_arr);
             handle_ipv4_packet(ethernet, pkt)
         },
         _  => Action::Drop,

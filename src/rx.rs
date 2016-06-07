@@ -120,7 +120,7 @@ impl<'a> Receiver<'a> {
                                         self.stats.overflow += 1;
                                         match self.chan_fwd.try_push(pkt) {
                                             None => self.stats.queued += 1,
-                                            Some(pkt) => {
+                                            Some(_) => {
                                                 self.stats.failed += 1;
                                                 thread::sleep(Duration::new(0, 500));
                                             },
