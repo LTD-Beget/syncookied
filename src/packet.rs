@@ -322,7 +322,8 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: MacAddr, pkt: &mut IngressPacket) -
             pkt.tcp_mss = 1460; /* HACK */
             return Action::Reply(IngressPacket::default());
         }
-        if tcp.get_flags() & TcpFlags::ACK == TcpFlags::ACK {
+        /* disable stateful firewall for now */
+        if false /* tcp.get_flags() & TcpFlags::ACK == TcpFlags::ACK */ {
             let cookie = tcp.get_acknowledgement() - 1;
             let tcp_saddr = tcp.get_source();
             let tcp_daddr = tcp.get_destination();
