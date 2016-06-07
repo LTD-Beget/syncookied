@@ -35,19 +35,23 @@ impl RxStats {
 }
 
 pub struct Receiver<'a> {
-    ring_num: u16,
     cpu: usize,
     chan_reply: spsc::Producer<OutgoingPacket>,
-    chan_fwd: spsc::Producer<OutgoingPacket>,
+    chan_fwd: Option<spsc::Producer<OutgoingPacket>>,
     netmap: &'a mut NetmapDescriptor,
-    lock: Arc<AtomicUsize>,
     stats: RxStats,
+    lock: Arc<AtomicUsize>,
     mac: MacAddr,
+    ring_num: u16,
 }
 
 impl<'a> Receiver<'a> {
-    pub fn new(ring_num: u16, cpu: usize, chan_fwd: spsc::Producer<OutgoingPacket>, chan_reply: spsc::Producer<OutgoingPacket>,
-               netmap: &'a mut NetmapDescriptor, lock: Arc<AtomicUsize>, mac: MacAddr) -> Self {
+    pub fn new(ring_num: u16, cpu: usize,
+               chan_fwd: Option<spsc::Producer<OutgoingPacket>>,
+               chan_reply: spsc::Producer<OutgoingPacket>,
+               netmap: &'a mut NetmapDescriptor,
+               lock: Arc<AtomicUsize>,
+               mac: MacAddr) -> Self {
         Receiver {
             ring_num: ring_num,
             cpu: cpu,
@@ -108,29 +112,42 @@ impl<'a> Receiver<'a> {
                                     ring_num, slot_ptr, buf_ptr, slot.get_buf_idx());
 */
                                 to_forward.fetch_add(1, Ordering::SeqCst);
-                                //self.chan_fwd.push(OutgoingPacket::Forwarded((slot_ptr, buf_ptr, fwd_mac)));
-
-                                match self.chan_reply.try_push(OutgoingPacket::Forwarded((slot_ptr, buf_ptr, fwd_mac))) {
-                                    None => { self.stats.forwarded += 1 ; fw = true; },
-                                    Some(_) => { self.stats.failed += 1 },
+                                let chan = match self.chan_fwd {
+                                    Some(ref chan) => chan,
+                                    None => &self.chan_reply,
+                                };
+                                let packet = OutgoingPacket::Forwarded((slot_ptr, buf_ptr, fwd_mac));
+                                match chan.try_push(packet) {
+                                    None => {
+                                        self.stats.forwarded += 1;
+                                        fw = true;
+                                    },
+                                    Some(_) => {
+                                        self.stats.failed += 1;
+                                        thread::sleep(Duration::new(0, 200));
+                                    },
 				}
-                                //self.stats.forwarded += 1;
-                                fw = true;
                             },
                             Action::Reply(packet) => {
-                                use mpsc::TrySendError;
                                 match self.chan_reply.try_push(OutgoingPacket::Ingress(packet)) {
                                     None => self.stats.queued += 1,
-                                    Some(_) => {
+                                    Some(pkt) => {
                                         self.stats.overflow += 1;
-                                        /*match self.chan_fwd.try_push(pkt) {
-                                            None => self.stats.queued += 1,
-                                            Some(_) => { */
-                                                self.stats.failed += 1;
-                                                thread::sleep(Duration::new(0, 500));
-/*
+                                        match self.chan_fwd {
+                                            /* fall back to chan fwd if available */
+                                            Some(ref chan) => match chan.try_push(pkt) {
+                                                    None => self.stats.queued += 1,
+                                                    Some(_) => { 
+                                                        self.stats.failed += 1;
+                                                        thread::sleep(Duration::new(0, 200));
+                                                    },
                                             },
-                                        }; */
+                                            /* nothing to do, fail */
+                                            None => {
+                                                self.stats.failed += 1;
+                                                thread::sleep(Duration::new(0, 200));
+                                            }
+                                        }
                                     },
                                 }
                             },
