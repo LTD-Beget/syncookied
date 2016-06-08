@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicUsize};
 use std::net::Ipv4Addr;
 use std::str::FromStr;
 use pnet::util::MacAddr;
-use parking_lot::RwLock;
+use parking_lot::{RwLock,Mutex};
 use intmap::LocklessIntMap;
 
 use std::collections::BTreeMap;
@@ -182,22 +182,22 @@ pub enum OutgoingPacket {
 }
 
 fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, qlen: u32, first_cpu: usize, uptime_readers: Vec<(Ipv4Addr, Box<UptimeReader>)>) {
-    use std::sync::{Mutex,Arc};
+    use std::sync::Arc;
 
     let rx_nm = Arc::new(Mutex::new(NetmapDescriptor::new(rx_iface).unwrap()));
     let multi_if = rx_iface != tx_iface;
     let tx_nm = if multi_if {
-         let rx_nm = &*rx_nm.lock().unwrap();
+         let rx_nm = &*rx_nm.lock();
          Arc::new(Mutex::new(NetmapDescriptor::new_with_memory(tx_iface, rx_nm).unwrap()))
      } else {
          rx_nm.clone()
     };
     let rx_count = {
-        let rx_nm = rx_nm.lock().unwrap();
+        let rx_nm = rx_nm.lock();
         rx_nm.get_rx_rings_count()
     };
     let tx_count = {
-        let tx_nm = tx_nm.lock().unwrap();
+        let tx_nm = tx_nm.lock();
         tx_nm.get_tx_rings_count()
     };
     println!("{} Rx rings @ {}, {} Tx rings @ {} Queue: {}", rx_count, rx_iface, tx_count, tx_iface, qlen);
@@ -235,7 +235,7 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, qlen: u
                 scope.spawn(move || {
                     println!("Starting RX thread for ring {} at {}", ring, rx_iface);
                     let mut ring_nm = {
-                        let nm = rx_nm.lock().unwrap();
+                        let nm = rx_nm.lock();
                         nm.clone_ring(ring, Direction::Input).unwrap()
                     };
                     let cpu = first_cpu + ring as usize;
@@ -268,7 +268,7 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, qlen: u
                 scope.spawn(move || {
                     println!("Starting TX thread for ring {} at {}", ring, rx_iface);
                     let mut ring_nm = {
-                        let nm = f_tx_nm.lock().unwrap();
+                        let nm = f_tx_nm.lock();
                         nm.clone_ring(ring, Direction::Output).unwrap()
                     };
                     let cpu = first_cpu + ring as usize; /* we assume queues/rings are bound to cpus */
@@ -280,7 +280,7 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, qlen: u
             scope.spawn(move || {
                 println!("Starting TX thread for ring {} at {}", ring, tx_iface);
                 let mut ring_nm = {
-                    let nm = tx_nm.lock().unwrap();
+                    let nm = tx_nm.lock();
                     nm.clone_ring(ring, Direction::Output).unwrap()
                 };
                 /* We assume that in multi_if configuration 
@@ -371,7 +371,6 @@ fn main() {
 
     if let Some(matches) = matches.subcommand_matches("server") {
         let addr = matches.value_of("addr").unwrap_or("127.0.0.1:1488"); 
-        println!("running server on {}", addr);
         uptime::run_server(addr);
     } else {
         let rx_iface = matches.value_of("in").expect("Expected valid input interface");
