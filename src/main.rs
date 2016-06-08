@@ -17,6 +17,7 @@ use std::cell::RefCell;
 use std::thread;
 use std::time::Duration;
 use std::sync::atomic::{AtomicUsize};
+use std::sync::Arc;
 use std::net::Ipv4Addr;
 use std::str::FromStr;
 use pnet::util::MacAddr;
@@ -181,9 +182,25 @@ pub enum OutgoingPacket {
     Forwarded((usize, usize, MacAddr)),
 }
 
-fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, qlen: u32, first_cpu: usize, uptime_readers: Vec<(Ipv4Addr, Box<UptimeReader>)>) {
-    use std::sync::Arc;
+fn run_uptime_readers(time_to_die: Arc<Mutex<bool>>, uptime_readers: Vec<(Ipv4Addr, Box<UptimeReader>)>) {
+    let one_sec = Duration::new(1, 0);
+    for (ip, uptime_reader) in uptime_readers.into_iter() {
+        let time_to_die = time_to_die.clone();
+        thread::spawn(move|| loop {
+            match uptime_reader.read() {
+                Ok(buf) => uptime::update(ip, buf),
+                Err(err) => println!("Failed to read uptime: {:?}", err),
+            }
+            thread::sleep(one_sec);
+            let time_to_die = *time_to_die.lock();
+            if time_to_die {
+                break;
+            }
+        });
+    }
+}
 
+fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, qlen: u32, first_cpu: usize, uptime_readers: Vec<(Ipv4Addr, Box<UptimeReader>)>) {
     let rx_nm = Arc::new(Mutex::new(NetmapDescriptor::new(rx_iface).unwrap()));
     let multi_if = rx_iface != tx_iface;
     let tx_nm = if multi_if {
@@ -206,16 +223,9 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, qlen: u
     }
 
     crossbeam::scope(|scope| {
-        let one_sec = Duration::new(1, 0);
-        for (ip, uptime_reader) in uptime_readers.into_iter() {
-            scope.spawn(move|| loop {
-                match uptime_reader.read() {
-                    Ok(buf) => uptime::update(ip, buf),
-                    Err(err) => println!("Failed to read uptime: {:?}", err),
-                }
-                thread::sleep(one_sec);
-            });
-        }
+        let time_to_die = Arc::new(Mutex::new(false));
+
+        run_uptime_readers(time_to_die, uptime_readers);
 
         for ring in 0..rx_count {
             let ring = ring;
