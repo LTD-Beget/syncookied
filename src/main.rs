@@ -328,10 +328,6 @@ fn main() {
                                      .value_name("ip:port")
                                      .help("ip:port to listen on"))
                               )
-                              .arg(Arg::with_name("local")
-                                   .long("local")
-                                   .conflicts_with("remote")
-                                   .help("Operate on a single host"))
                               .arg(Arg::with_name("in")
                                    .short("i")
                                    .long("input-interface")
@@ -347,7 +343,7 @@ fn main() {
                                    .takes_value(true))
                                .arg(Arg::with_name("in-mac")
                                     .short("I")
-                                    .required(true)
+                                    .required(false)
                                     .long("input-mac")
                                     .value_name("xx:xx:xx:xx:xx:xx")
                                     .help("Input interface mac address")
@@ -380,9 +376,14 @@ fn main() {
     } else {
         let rx_iface = matches.value_of("in").expect("Expected valid input interface");
         let tx_iface = matches.value_of("out").unwrap_or(rx_iface);
-        let rx_mac = matches.value_of("in-mac").map(util::parse_mac).expect("Expected valid mac").unwrap();
-        let tx_mac: MacAddr = matches.value_of("out-mac").map(|mac| util::parse_mac(mac).expect("Expected valid mac")).unwrap_or(rx_mac.clone());
-        let local = matches.is_present("local");
+        let rx_mac: MacAddr = matches.value_of("in-mac")
+                                .map(str::to_owned)
+                                .or_else(|| util::get_iface_mac(rx_iface).ok())
+                                .map(|mac| util::parse_mac(&mac).expect("Expected valid mac")).unwrap();
+        let tx_mac: MacAddr = matches.value_of("out-mac")
+                                .map(str::to_owned)
+                                .or_else(|| util::get_iface_mac(tx_iface).ok())
+                                .map(|mac| util::parse_mac(&mac).expect("Expected valid mac")).unwrap_or(rx_mac.clone());
         let ncpus = util::get_cpu_count();
         let qlen = matches.value_of("qlen")
                           .map(|x| u32::from_str(x).expect("Expected number for queue length"))
@@ -391,15 +392,12 @@ fn main() {
                          .map(|x| usize::from_str(x).expect("Expected cpu number"))
                          .unwrap_or(0);
 
-        let uptime_readers = if !local {
+        let uptime_readers =
             config::configure().iter().map(|&(ip, ref addr)|
                 (ip, Box::new(uptime::UdpReader::new(addr.to_owned())) as Box<UptimeReader>)
-            ).collect()
-        } else {
-            vec![(Ipv4Addr::new(127,0,0,1), Box::new(uptime::LocalReader) as Box<UptimeReader>)]
-        };
+            ).collect();
 
-        println!("interfaces: [Rx: {}/{}, Tx: {}/{}] Cores: {} Local: {}", rx_iface, rx_mac, tx_iface, tx_mac, ncpus, local);
+        println!("interfaces: [Rx: {}/{}, Tx: {}/{}] Cores: {}", rx_iface, rx_mac, tx_iface, tx_mac, ncpus);
         run(&rx_iface, &tx_iface, rx_mac, tx_mac, qlen, cpu, uptime_readers);
     }
 }
