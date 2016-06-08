@@ -14,6 +14,17 @@ pub fn set_thread_name(name: &str) {
     file.write_all(name.as_bytes()).ok();
 }
 
+pub fn set_syncookies(val: u8) -> Result<(), io::Error> {
+    match OpenOptions::new()
+        .write(true)
+        .create(false)
+        .open("/proc/sys/net/ipv4/tcp_syncookies")
+    {
+        Ok(mut file) => file.write_all(format!("{}", val).as_bytes()),
+        Err(e) => Err(e),
+    }
+}
+
 pub fn get_cpu_count() -> usize {
     unsafe {
         libc::sysconf(libc::_SC_NPROCESSORS_ONLN) as usize

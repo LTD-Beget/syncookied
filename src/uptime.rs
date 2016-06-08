@@ -11,7 +11,9 @@ impl UptimeReader for LocalReader {
     fn read(&self) -> io::Result<Vec<u8>> {
         use std::fs::File;
         use std::io::prelude::*;
-        let mut file = File::open("/proc/beget_uptime").unwrap();
+        let mut file = File::open("/proc/beget_uptime")
+                        .or(File::open("/proc/tcp_secrets"))
+                        .unwrap();
         let mut buf = vec![];
         try!(file.read_to_end(&mut buf));
         Ok(buf)
@@ -103,6 +105,12 @@ pub fn update(ip: Ipv4Addr, buf: Vec<u8>) {
 
 pub fn run_server(addr: &str) {
     use std::net::UdpSocket;
+
+    println!("Trying to enable syncookies");
+    if let Ok(_) = ::util::set_syncookies(2) {
+        println!("Syncookies enabled");
+    }
+    println!("Listening on {}", addr);
     let socket = UdpSocket::bind(addr).expect("Cannot bind socket");
 
     loop {
