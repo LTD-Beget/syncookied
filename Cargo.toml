@@ -11,7 +11,13 @@ scheduler = "0.1.1"
 clap = "2.4.0"
 lazy_static = "0.2.1"
 yaml-rust = "0.3.2"
-parking_lot = "0.1.2"
+parking_lot = "0.2.6"
+fnv = "1.0.2"
+
+[dependencies.bounded-spsc-queue]
+git = "https://github.com/polachok/bounded-spsc-queue.git"
+rev = "b6e0c6e4a93ba0db0c1579b4bc59f49392cab288"
+branch = "with"
 
 [dependencies.mpsc]
 git = "https://github.com/polachok/mpsc.git"
@@ -26,6 +32,10 @@ features = [ "netmap_with_libs" ]
 git = "https://github.com/polachok/libpnet"
 rev = "1e55befffd630cef33209396d629efc87fe8c74f"
 branch = "syncookied"
+
+[dependencies.intmap]
+git = "https://github.com/polachok/intmap"
+rev = "37c7289c1ecb7af4d28b66b041c81079f9dbdc3e"
 
 [build-dependencies]
 gcc = "0.3.26"

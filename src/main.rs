@@ -8,7 +8,11 @@ extern crate clap;
 extern crate yaml_rust;
 extern crate parking_lot;
 extern crate mpsc;
+extern crate intmap;
+extern crate fnv;
+extern crate bounded_spsc_queue as spsc;
 
+use std::fmt;
 use std::cell::RefCell;
 use std::thread;
 use std::time::Duration;
@@ -17,8 +21,10 @@ use std::net::Ipv4Addr;
 use std::str::FromStr;
 use pnet::util::MacAddr;
 use parking_lot::RwLock;
+use intmap::LocklessIntMap;
 
 use std::collections::BTreeMap;
+use std::hash::BuildHasherDefault;
 
 use clap::{Arg, App, AppSettings, SubCommand};
 
@@ -43,13 +49,49 @@ lazy_static! {
         let hm = BTreeMap::new();
         RwLock::new(hm)
     };
-
 }
 
 thread_local!(pub static LOCAL_ROUTING_TABLE: RefCell<BTreeMap<Ipv4Addr, HostConfiguration>> = {
     let hm = BTreeMap::new();
     RefCell::new(hm)
 });
+
+#[derive(Clone)]
+struct StateTable {
+    map: LocklessIntMap<BuildHasherDefault<fnv::FnvHasher>>,
+}
+
+impl fmt::Debug for StateTable {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "StateTable")
+    }
+}
+
+impl StateTable {
+    fn oct_to_u32(octets: [u8; 4]) -> u32 {
+        (octets[0] as u32) << 24 | (octets[1] as u32) << 16 | (octets[2] as u32) << 8 | octets[3] as u32
+    }
+
+    fn new(size: usize) -> Self {
+        StateTable {
+            map: LocklessIntMap::new(size, BuildHasherDefault::<fnv::FnvHasher>::default())
+        }
+    }
+
+    pub fn add_state(&mut self, ip: Ipv4Addr, source_port: u16, dest_port: u16, state: usize) {
+        let key: usize = (Self::oct_to_u32(ip.octets()) as usize) << 32
+                         | (source_port as usize) << 16
+                         | dest_port as usize;
+        self.map.insert(key, state);
+    }
+    
+    pub fn get_state(&self, ip: Ipv4Addr, source_port: u16, dest_port: u16) -> Option<usize> {
+        let key: usize = (Self::oct_to_u32(ip.octets()) as usize) << 32
+                         | (source_port as usize) << 16
+                         | dest_port as usize;
+        self.map.get(key)
+    }
+}
 
 pub struct RoutingTable;
 
@@ -118,7 +160,8 @@ pub struct HostConfiguration {
     mac: MacAddr,
     tcp_timestamp: u64,
     tcp_cookie_time: u64,
-    syncookie_secret: [[u32;17];2] 
+    syncookie_secret: [[u32;17];2],
+    state_table: StateTable,
 }
 
 impl HostConfiguration {
@@ -128,6 +171,7 @@ impl HostConfiguration {
             tcp_timestamp: 0,
             tcp_cookie_time: 0,
             syncookie_secret: [[0;17];2],
+            state_table: StateTable::new(1024 * 1024),
         }
     }
 }
@@ -137,7 +181,7 @@ pub enum OutgoingPacket {
     Forwarded((usize, usize, MacAddr)),
 }
 
-fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, uptime_readers: Vec<(Ipv4Addr, Box<UptimeReader>)>) {
+fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, qlen: u32, first_cpu: usize, uptime_readers: Vec<(Ipv4Addr, Box<UptimeReader>)>) {
     use std::sync::{Mutex,Arc};
 
     let rx_nm = Arc::new(Mutex::new(NetmapDescriptor::new(rx_iface).unwrap()));
@@ -156,7 +200,7 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, uptime_
         let tx_nm = tx_nm.lock().unwrap();
         tx_nm.get_tx_rings_count()
     };
-    println!("{} Rx rings @ {}, {} Tx rings @ {}", rx_count, rx_iface, tx_count, tx_iface);
+    println!("{} Rx rings @ {}, {} Tx rings @ {} Queue: {}", rx_count, rx_iface, tx_count, tx_iface, qlen);
     if tx_count < rx_count {
         panic!("We need at least as much Tx rings as Rx rings")
     }
@@ -175,7 +219,13 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, uptime_
 
         for ring in 0..rx_count {
             let ring = ring;
-            let (tx, rx) = mpsc::sync_channel(2 * 1024 * 1024);
+            let (tx, rx) = spsc::make(qlen as usize);
+            let (f_tx, f_rx) = if multi_if {
+                let (f_tx, f_rx) = spsc::make(qlen as usize);
+                (Some(f_tx), Some(f_rx))
+            } else {
+                (None, None)
+            };
             let pair = Arc::new(AtomicUsize::new(0));
             let rx_pair = pair.clone();
 
@@ -188,12 +238,13 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, uptime_
                         let nm = rx_nm.lock().unwrap();
                         nm.clone_ring(ring, Direction::Input).unwrap()
                     };
-                    let cpu = ring as usize;
-                    rx::Receiver::new(ring, cpu, tx, &mut ring_nm, rx_pair, rx_mac.clone()).run();
+                    let cpu = first_cpu + ring as usize;
+                    rx::Receiver::new(ring, cpu, f_tx, tx, &mut ring_nm, rx_pair, rx_mac.clone()).run();
                 });
             }
 
             /* Start an ARP thread to keep switch from forgetting about us */
+            /*
             if multi_if && ring == 0 {
                     let rx_nm = rx_nm.clone();
 
@@ -208,6 +259,22 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, uptime_
                     arp::Sender::new(ring, cpu, &mut ring_nm, rx_mac.clone(), Ipv4Addr::new(185,50,25,2), Ipv4Addr::new(185,50,25,1)).run();
                 });
             }
+            */
+
+            /* second half */
+            if multi_if {
+                let f_tx_nm = rx_nm.clone();
+                let pair = pair.clone();
+                scope.spawn(move || {
+                    println!("Starting TX thread for ring {} at {}", ring, rx_iface);
+                    let mut ring_nm = {
+                        let nm = f_tx_nm.lock().unwrap();
+                        nm.clone_ring(ring, Direction::Output).unwrap()
+                    };
+                    let cpu = first_cpu + ring as usize; /* we assume queues/rings are bound to cpus */
+                    tx::Sender::new(ring, cpu, f_rx.unwrap(), &mut ring_nm, pair, rx_mac.clone()).run();
+                });
+            }
 
             let tx_nm = tx_nm.clone();
             scope.spawn(move || {
@@ -216,7 +283,15 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, uptime_
                     let nm = tx_nm.lock().unwrap();
                     nm.clone_ring(ring, Direction::Output).unwrap()
                 };
-                let cpu = rx_count as usize + ring as usize; /* HACK */
+                /* We assume that in multi_if configuration 
+                 *  - RX queues are bound to [first_cpu .. first_cpu + rx_count]
+                 *  - TX queues are bound to [ first_cpu + rx_count .. first_cpu + rx_count + tx_count ]
+                 */
+                let cpu = if multi_if {
+                    rx_count as usize
+                } else {
+                    0
+                } + first_cpu + ring as usize;
                 tx::Sender::new(ring, cpu, rx, &mut ring_nm, pair, tx_mac).run();
             });
         }
@@ -284,6 +359,18 @@ fn main() {
                                     .value_name("xx:xx:xx:xx:xx:xx")
                                     .help("Output interface mac address")
                                     .takes_value(true))
+                               .arg(Arg::with_name("qlen")
+                                    .short("N")
+                                    .required(false)
+                                    .long("queue-length")
+                                    .help("Length of buffer queue")
+                                    .takes_value(true))
+                               .arg(Arg::with_name("cpu")
+                                    .short("C")
+                                    .required(false)
+                                    .long("first-cpu")
+                                    .help("First cpu to use for Rx")
+                                    .takes_value(true))
                                .get_matches();
 
     if let Some(matches) = matches.subcommand_matches("server") {
@@ -297,6 +384,12 @@ fn main() {
         let tx_mac: MacAddr = matches.value_of("out-mac").map(|mac| util::parse_mac(mac).expect("Expected valid mac")).unwrap_or(rx_mac.clone());
         let local = matches.is_present("local");
         let ncpus = util::get_cpu_count();
+        let qlen = matches.value_of("qlen")
+                          .map(|x| u32::from_str(x).expect("Expected number for queue length"))
+                          .unwrap_or(1024 * 1024);
+        let cpu = matches.value_of("cpu")
+                         .map(|x| usize::from_str(x).expect("Expected cpu number"))
+                         .unwrap_or(0);
 
         let uptime_readers = if !local {
             config::configure().iter().map(|&(ip, ref addr)|
@@ -307,6 +400,6 @@ fn main() {
         };
 
         println!("interfaces: [Rx: {}/{}, Tx: {}/{}] Cores: {} Local: {}", rx_iface, rx_mac, tx_iface, tx_mac, ncpus, local);
-        run(&rx_iface, &tx_iface, rx_mac, tx_mac, uptime_readers);
+        run(&rx_iface, &tx_iface, rx_mac, tx_mac, qlen, cpu, uptime_readers);
     }
 }

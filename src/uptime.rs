@@ -33,9 +33,13 @@ impl UdpReader {
 impl UptimeReader for UdpReader {
     fn read(&self) -> io::Result<Vec<u8>> {
         use std::net::UdpSocket;
+        use std::time::Duration;
 
         let mut buf = vec![0;1024];
         let socket = try!(UdpSocket::bind("0.0.0.0:0"));
+        let timeout = Duration::new(1, 0);
+        socket.set_read_timeout(Some(timeout));
+        socket.set_write_timeout(Some(timeout));
         loop {
             socket.send_to(b"YO", self.addr.as_str()).unwrap();
             if let Ok(..) = socket.recv_from(&mut buf[0..]) {

@@ -2,6 +2,7 @@ use std::mem;
 use std::time::{self,Duration};
 use std::thread;
 use ::mpsc;
+use ::spsc;
 use ::mpsc::TryRecvError;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -33,7 +34,7 @@ impl TxStats {
 pub struct Sender<'a> {
     ring_num: u16,
     cpu: usize,
-    chan: mpsc::Receiver<OutgoingPacket>,
+    chan: spsc::Consumer<OutgoingPacket>,
     netmap: &'a mut NetmapDescriptor,
     lock: Arc<AtomicUsize>,
     source_mac: MacAddr,
@@ -41,7 +42,7 @@ pub struct Sender<'a> {
 }
 
 impl<'a> Sender<'a> {
-    pub fn new(ring_num: u16, cpu: usize, chan: mpsc::Receiver<OutgoingPacket>,
+    pub fn new(ring_num: u16, cpu: usize, chan: spsc::Consumer<OutgoingPacket>,
             netmap: &'a mut NetmapDescriptor, lock: Arc<AtomicUsize>,
             source_mac: MacAddr) -> Sender<'a> {
         Sender {
@@ -68,7 +69,7 @@ impl<'a> Sender<'a> {
         println!("[TX#{}] started", self.ring_num);
 
         let mut before = time::Instant::now();
-        let seconds: usize = 10;
+        let seconds: usize = 5;
         let ival = time::Duration::new(seconds as u64, 0);
         let mut rate: usize = 0;
 
@@ -83,20 +84,34 @@ impl<'a> Sender<'a> {
 
                     /* send one packet */
                     if let Some((slot, buf)) = tx_iter.next() {
-                        let pkt = self.chan.recv().expect("Expected RX not to die on us");
-                        Self::send(pkt, slot, buf, &mut self.stats, &mut self.lock,
-                                   self.ring_num, self.source_mac);
-
+                        let stats = &mut self.stats;
+                        let lock = &mut self.lock;
+                        let ring_num = self.ring_num;
+                        let source_mac = self.source_mac;
+                        match self.chan.try_pop_with(|pkt| {
+                            if rate < 1000 {
+                                    ::RoutingTable::sync_tables();
+                                }
+                                Self::send(pkt, slot, buf, stats, lock,
+                                           ring_num, source_mac);
+                            }) {
+                            None => thread::sleep(Duration::new(0, 100)),
+                            Some(_) => { },
+                        }
                     }
                     /* try to send more if we have any (non-blocking) */
                     for (slot, buf) in tx_iter {
-                        match self.chan.try_recv() {
-                            Ok(pkt) => Self::send(pkt, slot, buf, &mut self.stats, &mut self.lock,
-                                                  self.ring_num, self.source_mac),
-                            Err(TryRecvError::Empty) => break,
-                            Err(TryRecvError::Disconnected) => panic!("Expected RX not to die on us"),
+                        let stats = &mut self.stats;
+                        let lock = &mut self.lock;
+                        let ring_num = self.ring_num;
+                        let source_mac = self.source_mac;
+                        match self.chan.try_pop() {
+                            None => thread::sleep(Duration::new(0, 200)),
+                            Some(ref pkt) => { 
+								Self::send(pkt, slot, buf, stats, lock,
+													  ring_num, source_mac)
+							},
                         }
-
 
 /*
                         if rate <= 1000 {
@@ -126,20 +141,20 @@ impl<'a> Sender<'a> {
     }
 
     #[inline]
-    fn send(pkt: OutgoingPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxStats,
+    fn send(pkt: &OutgoingPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxStats,
             lock: &mut Arc<AtomicUsize>, ring_num: u16, source_mac: MacAddr) {
         match pkt {
-            OutgoingPacket::Ingress(pkt) => {
-                if let Some(len) = packet::handle_reply(pkt, source_mac, buf) {
+            &OutgoingPacket::Ingress(ref pkt) => {
+                if let Some(len) = packet::handle_reply(&pkt, source_mac, buf) {
                     //println!("[TX#{}] SENDING PACKET\n", ring_num);
-                    slot.set_flags(netmap::NS_BUF_CHANGED as u16 /* | netmap::NS_REPORT as u16 */);
+                    slot.set_flags(0); //netmap::NS_BUF_CHANGED as u16 /* | netmap::NS_REPORT as u16 */);
                     slot.set_len(len as u16);
                     stats.sent += 1;
                 } else {
                     stats.failed += 1;
                 }
             },
-            OutgoingPacket::Forwarded((slot_ptr, buf_ptr, destination_mac)) => {
+            &OutgoingPacket::Forwarded((slot_ptr, buf_ptr, destination_mac)) => {
                 use std::slice;
                 /* swap buffers (zero copy) */
                 let rx_slot: &mut TxSlot = unsafe { mem::transmute(slot_ptr as *mut TxSlot) };
