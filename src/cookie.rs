@@ -1,4 +1,3 @@
-use std::ptr;
 use std::mem;
 use std::net::Ipv4Addr;
 use std::num::Wrapping;
@@ -96,7 +95,7 @@ fn check_tcp_syn_cookie(cookie: u32, saddr: u32, daddr: u32,
     /* Cookie is now reduced to (count * 2^24) ^ (hash % 2^24) */
     diff = (count - (cookie >> COOKIEBITS as usize)) & Wrapping(0xffffffff >> COOKIEBITS);
     if diff >= Wrapping(MAX_SYNCOOKIE_AGE) {
-        let cookie_time = cookie >> COOKIEBITS as usize;
+        //let cookie_time = cookie >> COOKIEBITS as usize;
         //println!("COOKIE TOO OLD: {} NOW: {} COOKIE: {}", diff, count, cookie_time);
         return 0xffffffff;
     }

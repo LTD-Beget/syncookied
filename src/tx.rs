@@ -1,9 +1,7 @@
 use std::mem;
 use std::time::{self,Duration};
 use std::thread;
-use ::mpsc;
 use ::spsc;
-use ::mpsc::TryRecvError;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use ::netmap::{self, NetmapDescriptor, TxSlot, NetmapSlot};
@@ -142,7 +140,7 @@ impl<'a> Sender<'a> {
 
     #[inline]
     fn send(pkt: &OutgoingPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxStats,
-            lock: &mut Arc<AtomicUsize>, ring_num: u16, source_mac: MacAddr) {
+            lock: &mut Arc<AtomicUsize>, _ring_num: u16, source_mac: MacAddr) {
         match pkt {
             &OutgoingPacket::Ingress(ref pkt) => {
                 if let Some(len) = packet::handle_reply(&pkt, source_mac, buf) {

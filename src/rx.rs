@@ -1,6 +1,5 @@
 use std::time::{self,Duration};
 use std::thread;
-use ::mpsc;
 use ::spsc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -49,7 +48,7 @@ pub struct Receiver<'a> {
 fn adaptive_push(chan: &spsc::Producer<OutgoingPacket>, pkt: OutgoingPacket, retries: usize) -> Option<OutgoingPacket> {
     // fast path
     let mut packet = pkt;
-    for i in 0..retries - 1 {
+    for _ in 0..retries - 1 {
         if let Some(pkt) = chan.try_push(packet) {
             packet = pkt;
             unsafe { libc::sched_yield() };
@@ -148,7 +147,7 @@ impl<'a> Receiver<'a> {
 								}
                             },
                             Action::Reply(packet) => {
-                                let mut packet = OutgoingPacket::Ingress(packet);
+                                let packet = OutgoingPacket::Ingress(packet);
                                 match self.chan_reply.try_push(packet) {
                                     Some(pkt) => {
                                         self.stats.overflow += 1;

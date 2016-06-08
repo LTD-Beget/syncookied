@@ -120,7 +120,6 @@ fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) 
     ip.set_checksum(0);
 
     {
-        use std::ptr;
         use std::mem;
         /* build tcp packet */
         let mut cookie_time = 0;

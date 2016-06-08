@@ -55,7 +55,7 @@ fn parse_host(doc: &Yaml) -> Option<HostConfig> {
 }
 
 fn parse_config(doc: &Yaml) -> Vec<HostConfig> {
-    let mut hosts = vec![];
+    let hosts = vec![];
     match *doc {
         Yaml::Array(ref arr) => {
             return arr.iter().filter_map(parse_host).collect();
