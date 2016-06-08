@@ -45,10 +45,11 @@ pub struct Receiver<'a> {
     ring_num: u16,
 }
 
-fn adaptive_push(chan: &spsc::Producer<OutgoingPacket>, pkt: OutgoingPacket) -> Option<OutgoingPacket> {
+#[inline(always)]
+fn adaptive_push(chan: &spsc::Producer<OutgoingPacket>, pkt: OutgoingPacket, retries: usize) -> Option<OutgoingPacket> {
     // fast path
     let mut packet = pkt;
-    for i in 0..5 {
+    for i in 0..retries - 1 {
         if let Some(pkt) = chan.try_push(packet) {
             packet = pkt;
             unsafe { libc::sched_yield() };
@@ -60,7 +61,6 @@ fn adaptive_push(chan: &spsc::Producer<OutgoingPacket>, pkt: OutgoingPacket) -> 
     match chan.try_push(packet) {
         None => None,
         x => { 
-            thread::sleep(Duration::new(0, 200));
             return x;
         },
     }
@@ -139,29 +139,28 @@ impl<'a> Receiver<'a> {
                                     None => &self.chan_reply,
                                 };
                                 let packet = OutgoingPacket::Forwarded((slot_ptr, buf_ptr, fwd_mac));
-                                match adaptive_push(chan, packet) {
+                                match adaptive_push(chan, packet, 1) {
                                     Some(_) => self.stats.failed += 1,
                                     None => {
                                         self.stats.forwarded += 1;
                                         fw = true;
                                     },
-				}
+								}
                             },
                             Action::Reply(packet) => {
-                                let packet = OutgoingPacket::Ingress(packet);
-                                match adaptive_push(&self.chan_reply, packet) {
+                                let mut packet = OutgoingPacket::Ingress(packet);
+                                match self.chan_reply.try_push(packet) {
                                     Some(pkt) => {
                                         self.stats.overflow += 1;
                                         match self.chan_fwd {
                                             /* fall back to chan fwd if available */
-                                            Some(ref chan) => match adaptive_push(chan, pkt) {
+                                            Some(ref chan) => match adaptive_push(chan, pkt, 1) {
                                                 None => self.stats.queued += 1,
                                                 Some(_) => self.stats.failed += 1,
                                             },
                                             /* nothing we can do, fail */
                                             None => {
                                                 self.stats.failed += 1;
-                                                unsafe { libc::sched_yield() };
                                             }
                                         }
                                     },
@@ -178,13 +177,11 @@ impl<'a> Receiver<'a> {
                                                     None => self.stats.queued += 1,
                                                     Some(_) => { 
                                                         self.stats.failed += 1;
-                                                        thread::sleep(Duration::new(0, 200));
                                                     },
                                             },
                                             /* nothing to do, fail */
                                             None => {
                                                 self.stats.failed += 1;
-                                                thread::sleep(Duration::new(0, 200));
                                             }
                                         }
                                     },

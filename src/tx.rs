@@ -95,8 +95,8 @@ impl<'a> Sender<'a> {
                                 Self::send(pkt, slot, buf, stats, lock,
                                            ring_num, source_mac);
                             }) {
-                            None => thread::sleep(Duration::new(0, 200)),
-                            Some(()) => { },
+                            None => thread::sleep(Duration::new(0, 100)),
+                            Some(_) => { },
                         }
                     }
                     /* try to send more if we have any (non-blocking) */
@@ -105,12 +105,12 @@ impl<'a> Sender<'a> {
                         let lock = &mut self.lock;
                         let ring_num = self.ring_num;
                         let source_mac = self.source_mac;
-                        match self.chan.try_pop_with(|pkt| {
-                            Self::send(pkt, slot, buf, stats, lock,
-                                                  ring_num, source_mac)
-                        }) {
+                        match self.chan.try_pop() {
                             None => thread::sleep(Duration::new(0, 200)),
-                            Some(()) => { },
+                            Some(ref pkt) => { 
+								Self::send(pkt, slot, buf, stats, lock,
+													  ring_num, source_mac)
+							},
                         }
 
 /*
