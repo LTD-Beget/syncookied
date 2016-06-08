@@ -107,8 +107,9 @@ pub fn run_server(addr: &str) {
     use std::net::UdpSocket;
 
     println!("Trying to enable syncookies");
-    if let Ok(_) = ::util::set_syncookies(2) {
-        println!("Syncookies enabled");
+    match ::util::set_syncookies(2) {
+        Ok(_) => println!("Syncookies enabled"),
+        Err(e) => println!("{}", e),
     }
     println!("Listening on {}", addr);
     let socket = UdpSocket::bind(addr).expect("Cannot bind socket");
