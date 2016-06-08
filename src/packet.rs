@@ -382,9 +382,11 @@ fn handle_ipv4_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket) -> Act
         pkt.ipv4_source = header.get_source();
         pkt.ipv4_destination = header.get_destination();
         let mut fwd_mac = MacAddr::new(0xff, 0xff, 0xff, 0xff, 0xff, 0xff);
-        ::RoutingTable::with_host_config(pkt.ipv4_destination, |hc| {
+        if ::RoutingTable::with_host_config(pkt.ipv4_destination, |hc| {
             fwd_mac = hc.mac;
-        });
+        }) == None {
+            return Action::Drop;
+        }
         handle_transport_protocol(header.get_next_level_protocol(),
                                   header.payload(),
                                   fwd_mac,
