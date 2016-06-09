@@ -54,3 +54,9 @@ Uptime reader for 185.50.25.4 starting
 ...
 ```
 8. Enjoy your ddos protection
+
+Notes
+-----
+`syncookied` has some options you may want to tune, see `syncookied --help`.
+If you have more than 1 interface on your server, you may want to look into -O to use second one for TX. 
+This greatly improves performance and latency as forwarding and syn-reply traffic is separated.
