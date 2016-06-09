@@ -89,10 +89,13 @@ pub fn dump_input(packet_data: &[u8]) {
 
 pub fn handle_input(packet_data: &[u8], mac: MacAddr) -> Action {
     let mut pkt: IngressPacket = Default::default();
-    let eth = EthernetPacket::new(packet_data).unwrap();
-    match handle_ether_packet(&eth, &mut pkt, mac) {
-        Action::Reply(_) => Action::Reply(pkt),
-        x@_ => x,
+    if let Some(eth) = EthernetPacket::new(packet_data) {
+        match handle_ether_packet(&eth, &mut pkt, mac) {
+            Action::Reply(_) => Action::Reply(pkt),
+            x@_ => x,
+        }
+    } else {
+        Action::Drop
     }
 }
 
