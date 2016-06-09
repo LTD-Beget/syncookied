@@ -7,11 +7,8 @@ How to run
 On server you want to protect
 ------------------------------
 1. Install tcpsecrets linux kernel mode to expose tcp syncookie key and timestamp
-2. Start syncookied in `server` mode:
-
- `syncookied server <ip:port>`
- 
-Running this commands automatically sets `net.ipv4.tcp_syncookies` to 2 (always) and starts a UDP server on specified ip/port.
+2. Start syncookied in `server` mode: `syncookied server <ip:port>`. Running this 
+commands automatically sets `net.ipv4.tcp_syncookies` to 2 (always) and starts a UDP server on specified ip/port.
 
 On server you want to use for packet processing
 -----------------------------------------------
@@ -46,5 +43,14 @@ Starting TX thread for ring 0 at eth2
 Uptime reader for 185.50.25.4 starting
 ...
 ```
-6. Configure your network devices to direct traffic for protected ip to syncookied.
-7. Enjoy your ddos protection
+6. Configure your network equipment to direct traffic for protected ip to syncookied.
+7. You can reload configuration at any time by changing hosts.yml and sending HUP signal to syncookied. 
+It will print something like this:
+```
+Uptime reader for 185.50.25.4 exiting
+All uptime readers dead
+Old readers are dead, all hail to new readers
+Uptime reader for 185.50.25.4 starting
+...
+```
+8. Enjoy your ddos protection
