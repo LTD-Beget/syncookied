@@ -7,10 +7,10 @@ extern crate scheduler;
 extern crate clap;
 extern crate yaml_rust;
 extern crate parking_lot;
-extern crate mpsc;
 extern crate intmap;
 extern crate fnv;
 extern crate bounded_spsc_queue as spsc;
+extern crate chan_signal;
 
 use std::fmt;
 use std::cell::RefCell;
@@ -18,16 +18,18 @@ use std::thread;
 use std::time::Duration;
 use std::sync::atomic::{AtomicUsize};
 use std::sync::Arc;
+use std::sync::mpsc;
 use std::net::Ipv4Addr;
 use std::str::FromStr;
 use pnet::util::MacAddr;
-use parking_lot::{RwLock,Mutex};
+use parking_lot::{RwLock,Mutex,Condvar};
 use intmap::LocklessIntMap;
 
 use std::collections::BTreeMap;
 use std::hash::BuildHasherDefault;
 
 use clap::{Arg, App, AppSettings, SubCommand};
+use chan_signal::Signal;
 
 mod netmap;
 mod cookie;
@@ -105,6 +107,11 @@ impl RoutingTable {
         w.insert(ip, host_conf);
     }
 
+    fn clear() {
+        let mut w = GLOBAL_HOST_CONFIGURATION.write();
+        w.clear();
+    }
+
     pub fn get_ips() -> Vec<Ipv4Addr> {
         let r = GLOBAL_HOST_CONFIGURATION.read();
         r.keys().cloned().collect()
@@ -114,6 +121,7 @@ impl RoutingTable {
         LOCAL_ROUTING_TABLE.with(|rt| {
             let ips = ::RoutingTable::get_ips();
             let mut cache = rt.borrow_mut();
+            cache.clear();
             for ip in ips.iter() {
                 ::RoutingTable::with_host_config_global(*ip, |hc| { cache.insert(*ip, hc.to_owned()); });
             }
@@ -127,7 +135,7 @@ impl RoutingTable {
                 f(hc);
                 Some(())
             } else {
-                println!("Config for {} not found", ip);
+                //println!("Config for {} not found", ip);
                 None
             }
         })
@@ -139,7 +147,7 @@ impl RoutingTable {
             f(hc);
             Some(())
         } else {
-            println!("Config for {} not found", ip);
+            //println!("Config for {} not found", ip);
             None
         }
     }
@@ -150,7 +158,7 @@ impl RoutingTable {
             f(hc);
             Some(())
         } else {
-            println!("Config for {} not found", ip);
+            //println!("Config for {} not found", ip);
             None
         }
     }
@@ -182,22 +190,68 @@ pub enum OutgoingPacket {
     Forwarded((usize, usize, MacAddr)),
 }
 
-fn run_uptime_readers(time_to_die: Arc<Mutex<bool>>, uptime_readers: Vec<(Ipv4Addr, Box<UptimeReader>)>) {
+fn run_uptime_readers(reload_lock: Arc<(Mutex<bool>, Condvar)>, uptime_readers: Vec<(Ipv4Addr, Box<UptimeReader>)>) {
     let one_sec = Duration::new(1, 0);
-    for (ip, uptime_reader) in uptime_readers.into_iter() {
-        let time_to_die = time_to_die.clone();
-        thread::spawn(move|| loop {
-            match uptime_reader.read() {
-                Ok(buf) => uptime::update(ip, buf),
-                Err(err) => println!("Failed to read uptime: {:?}", err),
+    crossbeam::scope(|scope| {
+        for (ip, uptime_reader) in uptime_readers.into_iter() {
+            let reload_lock = reload_lock.clone();
+            println!("Uptime reader for {} starting", ip);
+            scope.spawn(move|| loop {
+                ::util::set_thread_name(&format!("syncookied/{}", ip));
+                match uptime_reader.read() {
+                    Ok(buf) => uptime::update(ip, buf),
+                    Err(err) => println!("Failed to read uptime: {:?}", err),
+                }
+                thread::sleep(one_sec);
+                let &(ref lock, _) = &*reload_lock;
+                let time_to_die = lock.lock();
+                if *time_to_die {
+                    println!("Uptime reader for {} exiting", ip);
+                    break;
+                }
+            });
+        }
+    });
+    let &(ref lock, ref cv) = &*reload_lock;
+    let mut time_to_die = lock.lock();
+    *time_to_die = false;
+    cv.notify_all();
+    println!("All uptime readers dead");
+}
+
+fn handle_signals(reload_lock: Arc<(Mutex<bool>, Condvar)>) {
+    let signal = chan_signal::notify(&[Signal::HUP, Signal::INT]);
+    thread::spawn(move || loop {
+        ::util::set_thread_name("syncookied/sig");
+        match signal.recv().unwrap() {
+            Signal::HUP => {
+                println!("SIGHUP received, reloading configuration");
+                let uptime_readers = config::configure().iter().map(|&(ip, ref addr)|
+                                        (ip, Box::new(uptime::UdpReader::new(addr.to_owned())) as Box<UptimeReader>)
+                                       ).collect();
+                /* wait for old readers to die */
+                {
+                    let &(ref lock, ref cv) = &*reload_lock;
+                    let mut time_to_die = lock.lock();
+                    *time_to_die = true;
+                    while *time_to_die {
+                        cv.wait(&mut time_to_die); // unlocks mutex
+                    }
+                }
+                println!("Old readers are dead, all hail to new readers");
+                let reload_lock = reload_lock.clone();
+                thread::spawn(move || run_uptime_readers(reload_lock.clone(), uptime_readers));
+            },
+            Signal::INT => {
+                use std::process;
+                println!("SIGINT received, exiting");
+                process::exit(0);
+            },
+            _ => {
+                println!("Unhandled signal {:?}, ignoring", signal);
             }
-            thread::sleep(one_sec);
-            let time_to_die = *time_to_die.lock();
-            if time_to_die {
-                break;
-            }
-        });
-    }
+        }
+    });
 }
 
 fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, qlen: u32, first_cpu: usize, uptime_readers: Vec<(Ipv4Addr, Box<UptimeReader>)>) {
@@ -223,9 +277,11 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, qlen: u
     }
 
     crossbeam::scope(|scope| {
-        let time_to_die = Arc::new(Mutex::new(false));
+        let reload_lock = Arc::new((Mutex::new(false), Condvar::new()));
+        handle_signals(reload_lock.clone());
 
-        run_uptime_readers(time_to_die, uptime_readers);
+        scope.spawn(move || 
+                    run_uptime_readers(reload_lock.clone(), uptime_readers));
 
         for ring in 0..rx_count {
             let ring = ring;

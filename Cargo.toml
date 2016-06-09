@@ -13,6 +13,7 @@ lazy_static = "0.2.1"
 yaml-rust = "0.3.2"
 parking_lot = "0.2.6"
 fnv = "1.0.2"
+chan-signal = "0.1.6"
 
 [dependencies.bounded-spsc-queue]
 git = "https://github.com/polachok/bounded-spsc-queue.git"
