@@ -7,26 +7,29 @@ extern crate scheduler;
 extern crate clap;
 extern crate yaml_rust;
 extern crate parking_lot;
-extern crate mpsc;
 extern crate intmap;
 extern crate fnv;
 extern crate bounded_spsc_queue as spsc;
+extern crate chan_signal;
 
 use std::fmt;
 use std::cell::RefCell;
 use std::thread;
 use std::time::Duration;
 use std::sync::atomic::{AtomicUsize};
+use std::sync::Arc;
+use std::sync::mpsc;
 use std::net::Ipv4Addr;
 use std::str::FromStr;
 use pnet::util::MacAddr;
-use parking_lot::RwLock;
+use parking_lot::{RwLock,Mutex,Condvar};
 use intmap::LocklessIntMap;
 
 use std::collections::BTreeMap;
 use std::hash::BuildHasherDefault;
 
 use clap::{Arg, App, AppSettings, SubCommand};
+use chan_signal::Signal;
 
 mod netmap;
 mod cookie;
@@ -104,6 +107,11 @@ impl RoutingTable {
         w.insert(ip, host_conf);
     }
 
+    fn clear() {
+        let mut w = GLOBAL_HOST_CONFIGURATION.write();
+        w.clear();
+    }
+
     pub fn get_ips() -> Vec<Ipv4Addr> {
         let r = GLOBAL_HOST_CONFIGURATION.read();
         r.keys().cloned().collect()
@@ -113,6 +121,7 @@ impl RoutingTable {
         LOCAL_ROUTING_TABLE.with(|rt| {
             let ips = ::RoutingTable::get_ips();
             let mut cache = rt.borrow_mut();
+            cache.clear();
             for ip in ips.iter() {
                 ::RoutingTable::with_host_config_global(*ip, |hc| { cache.insert(*ip, hc.to_owned()); });
             }
@@ -126,7 +135,7 @@ impl RoutingTable {
                 f(hc);
                 Some(())
             } else {
-                println!("Config for {} not found", ip);
+                //println!("Config for {} not found", ip);
                 None
             }
         })
@@ -138,7 +147,7 @@ impl RoutingTable {
             f(hc);
             Some(())
         } else {
-            println!("Config for {} not found", ip);
+            //println!("Config for {} not found", ip);
             None
         }
     }
@@ -149,7 +158,7 @@ impl RoutingTable {
             f(hc);
             Some(())
         } else {
-            println!("Config for {} not found", ip);
+            //println!("Config for {} not found", ip);
             None
         }
     }
@@ -181,23 +190,85 @@ pub enum OutgoingPacket {
     Forwarded((usize, usize, MacAddr)),
 }
 
-fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, qlen: u32, first_cpu: usize, uptime_readers: Vec<(Ipv4Addr, Box<UptimeReader>)>) {
-    use std::sync::{Mutex,Arc};
+fn run_uptime_readers(reload_lock: Arc<(Mutex<bool>, Condvar)>, uptime_readers: Vec<(Ipv4Addr, Box<UptimeReader>)>) {
+    let one_sec = Duration::new(1, 0);
+    crossbeam::scope(|scope| {
+        for (ip, uptime_reader) in uptime_readers.into_iter() {
+            let reload_lock = reload_lock.clone();
+            println!("Uptime reader for {} starting", ip);
+            scope.spawn(move|| loop {
+                ::util::set_thread_name(&format!("syncookied/{}", ip));
+                match uptime_reader.read() {
+                    Ok(buf) => uptime::update(ip, buf),
+                    Err(err) => println!("Failed to read uptime: {:?}", err),
+                }
+                thread::sleep(one_sec);
+                let &(ref lock, _) = &*reload_lock;
+                let time_to_die = lock.lock();
+                if *time_to_die {
+                    println!("Uptime reader for {} exiting", ip);
+                    break;
+                }
+            });
+        }
+    });
+    let &(ref lock, ref cv) = &*reload_lock;
+    let mut time_to_die = lock.lock();
+    *time_to_die = false;
+    cv.notify_all();
+    println!("All uptime readers dead");
+}
 
+fn handle_signals(reload_lock: Arc<(Mutex<bool>, Condvar)>) {
+    let signal = chan_signal::notify(&[Signal::HUP, Signal::INT]);
+    thread::spawn(move || loop {
+        ::util::set_thread_name("syncookied/sig");
+        match signal.recv().unwrap() {
+            Signal::HUP => {
+                println!("SIGHUP received, reloading configuration");
+                let uptime_readers = config::configure().iter().map(|&(ip, ref addr)|
+                                        (ip, Box::new(uptime::UdpReader::new(addr.to_owned())) as Box<UptimeReader>)
+                                       ).collect();
+                /* wait for old readers to die */
+                {
+                    let &(ref lock, ref cv) = &*reload_lock;
+                    let mut time_to_die = lock.lock();
+                    *time_to_die = true;
+                    while *time_to_die {
+                        cv.wait(&mut time_to_die); // unlocks mutex
+                    }
+                }
+                println!("Old readers are dead, all hail to new readers");
+                let reload_lock = reload_lock.clone();
+                thread::spawn(move || run_uptime_readers(reload_lock.clone(), uptime_readers));
+            },
+            Signal::INT => {
+                use std::process;
+                println!("SIGINT received, exiting");
+                process::exit(0);
+            },
+            _ => {
+                println!("Unhandled signal {:?}, ignoring", signal);
+            }
+        }
+    });
+}
+
+fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, qlen: u32, first_cpu: usize, uptime_readers: Vec<(Ipv4Addr, Box<UptimeReader>)>) {
     let rx_nm = Arc::new(Mutex::new(NetmapDescriptor::new(rx_iface).unwrap()));
     let multi_if = rx_iface != tx_iface;
     let tx_nm = if multi_if {
-         let rx_nm = &*rx_nm.lock().unwrap();
+         let rx_nm = &*rx_nm.lock();
          Arc::new(Mutex::new(NetmapDescriptor::new_with_memory(tx_iface, rx_nm).unwrap()))
      } else {
          rx_nm.clone()
     };
     let rx_count = {
-        let rx_nm = rx_nm.lock().unwrap();
+        let rx_nm = rx_nm.lock();
         rx_nm.get_rx_rings_count()
     };
     let tx_count = {
-        let tx_nm = tx_nm.lock().unwrap();
+        let tx_nm = tx_nm.lock();
         tx_nm.get_tx_rings_count()
     };
     println!("{} Rx rings @ {}, {} Tx rings @ {} Queue: {}", rx_count, rx_iface, tx_count, tx_iface, qlen);
@@ -206,16 +277,11 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, qlen: u
     }
 
     crossbeam::scope(|scope| {
-        let one_sec = Duration::new(1, 0);
-        for (ip, uptime_reader) in uptime_readers.into_iter() {
-            scope.spawn(move|| loop {
-                match uptime_reader.read() {
-                    Ok(buf) => uptime::update(ip, buf),
-                    Err(err) => println!("Failed to read uptime: {:?}", err),
-                }
-                thread::sleep(one_sec);
-            });
-        }
+        let reload_lock = Arc::new((Mutex::new(false), Condvar::new()));
+        handle_signals(reload_lock.clone());
+
+        scope.spawn(move || 
+                    run_uptime_readers(reload_lock.clone(), uptime_readers));
 
         for ring in 0..rx_count {
             let ring = ring;
@@ -235,7 +301,7 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, qlen: u
                 scope.spawn(move || {
                     println!("Starting RX thread for ring {} at {}", ring, rx_iface);
                     let mut ring_nm = {
-                        let nm = rx_nm.lock().unwrap();
+                        let nm = rx_nm.lock();
                         nm.clone_ring(ring, Direction::Input).unwrap()
                     };
                     let cpu = first_cpu + ring as usize;
@@ -268,7 +334,7 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, qlen: u
                 scope.spawn(move || {
                     println!("Starting TX thread for ring {} at {}", ring, rx_iface);
                     let mut ring_nm = {
-                        let nm = f_tx_nm.lock().unwrap();
+                        let nm = f_tx_nm.lock();
                         nm.clone_ring(ring, Direction::Output).unwrap()
                     };
                     let cpu = first_cpu + ring as usize; /* we assume queues/rings are bound to cpus */
@@ -280,7 +346,7 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, qlen: u
             scope.spawn(move || {
                 println!("Starting TX thread for ring {} at {}", ring, tx_iface);
                 let mut ring_nm = {
-                    let nm = tx_nm.lock().unwrap();
+                    let nm = tx_nm.lock();
                     nm.clone_ring(ring, Direction::Output).unwrap()
                 };
                 /* We assume that in multi_if configuration 
@@ -371,7 +437,6 @@ fn main() {
 
     if let Some(matches) = matches.subcommand_matches("server") {
         let addr = matches.value_of("addr").unwrap_or("127.0.0.1:1488"); 
-        println!("running server on {}", addr);
         uptime::run_server(addr);
     } else {
         let rx_iface = matches.value_of("in").expect("Expected valid input interface");
