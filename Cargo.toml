@@ -1,19 +1,23 @@
 [package]
 name = "syncookied"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Alexander Polyakov <apolyakov@beget.ru>"]
 build = "build.rs"
 
 [dependencies]
-libc = "=0.2.11"
+libc = "0.2.11"
 crossbeam = "0.2.5"
-scheduler = "0.1.1"
 clap = "2.4.0"
 lazy_static = "0.2.1"
 yaml-rust = "0.3.2"
 parking_lot = "0.2.6"
 fnv = "1.0.2"
 chan-signal = "0.1.6"
+
+[dependencies.scheduler]
+git = "https://github.com/polachok/rust-scheduler"
+rev = "53b832905bf61ab8e8513e1fd9341a65d850ef27"
+branch = "newer-libc"
 
 [dependencies.bounded-spsc-queue]
 git = "https://github.com/polachok/bounded-spsc-queue.git"
