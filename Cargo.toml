@@ -1,6 +1,6 @@
 [package]
 name = "syncookied"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Alexander Polyakov <apolyakov@beget.ru>"]
 build = "build.rs"
 
