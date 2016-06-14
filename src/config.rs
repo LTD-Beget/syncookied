@@ -68,7 +68,7 @@ fn parse_config(doc: &Yaml) -> Vec<HostConfig> {
 }
 
 fn parse_file(path: &Path) -> Vec<HostConfig> {
-    let mut f = File::open(path).unwrap();
+    let mut f = File::open(path).expect("Expected hosts.yml in current directory");
     let mut s = String::new();
     let mut hosts = vec![];
 
