@@ -48,11 +48,6 @@ fn secure_tcp_syn_cookie(source_addr: u32, dest_addr: u32, source_port: u16,
             + ((Wrapping(cookie_hash(source_addr, dest_addr, source_port, dest_port, tcp_cookie_time, &secret[1])) + Wrapping(data)) & Wrapping(COOKIEMASK))).0
 }
 
-#[inline]
-fn oct_to_u32(octets: [u8; 4]) -> u32 {
-    (octets[0] as u32) << 24 | (octets[1] as u32) << 16 | (octets[2] as u32) << 8 | octets[3] as u32
-}
-
 /// Return cookie and mss value
 #[inline]
 pub fn generate_cookie_init_sequence(source_addr: Ipv4Addr, dest_addr: Ipv4Addr,
@@ -68,10 +63,10 @@ pub fn generate_cookie_init_sequence(source_addr: Ipv4Addr, dest_addr: Ipv4Addr,
             break;
         }
     }
-    let source_octets = source_addr.octets();
-    let dest_octets = dest_addr.octets();
-    let cookie = secure_tcp_syn_cookie(oct_to_u32(source_octets).to_be(), oct_to_u32(dest_octets).to_be(),
-                                     source_port.to_be(), dest_port.to_be(), seq, mssind, tcp_cookie_time, secret);
+    let sa: u32 = source_addr.into();
+    let da: u32 = dest_addr.into();
+    let cookie = secure_tcp_syn_cookie(sa.to_be(), da.to_be(), source_port.to_be(), dest_port.to_be(),
+                                       seq, mssind, tcp_cookie_time, secret);
     (cookie, mssval)
 }
 
@@ -107,11 +102,10 @@ pub fn cookie_check(source_addr: Ipv4Addr, dest_addr: Ipv4Addr,
                     source_port: u16, dest_port: u16, seq: u32,
                     cookie: u32) -> Option<&'static u16> {
     let seq = seq - 1;
-    let source_octets = source_addr.octets();
-    let dest_octets = dest_addr.octets();
-    let mssind = check_tcp_syn_cookie(cookie, oct_to_u32(source_octets).to_be(),
-                        oct_to_u32(dest_octets).to_be(), source_port.to_be(),
-                        dest_port.to_be(), seq);
+    let sa: u32 = source_addr.into();
+    let da: u32 = dest_addr.into();
+    let mssind = check_tcp_syn_cookie(cookie, sa.to_be(), da.to_be(),
+                        source_port.to_be(), dest_port.to_be(), seq);
     if mssind > 3 {
         //println!("COOKIE MSS IDX: {}", mssind);
     }
