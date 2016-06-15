@@ -383,7 +383,7 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, qlen: u
 
 fn main() {
     let matches = App::new("syncookied")
-                              .version("0.1.2")
+                              .version("0.1.3")
                               .author("Alexander Polyakov <apolyakov@beget.ru>")
                               .setting(AppSettings::SubcommandsNegateReqs)
                               .subcommand(
