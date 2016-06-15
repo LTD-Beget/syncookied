@@ -15,6 +15,7 @@ extern crate chan_signal;
 use std::fmt;
 use std::cell::RefCell;
 use std::thread;
+use std::path::PathBuf;
 use std::time::Duration;
 use std::sync::atomic::{AtomicUsize};
 use std::sync::Arc;
@@ -219,14 +220,14 @@ fn run_uptime_readers(reload_lock: Arc<(Mutex<bool>, Condvar)>, uptime_readers: 
     println!("All uptime readers dead");
 }
 
-fn handle_signals(reload_lock: Arc<(Mutex<bool>, Condvar)>) {
+fn handle_signals(path: PathBuf, reload_lock: Arc<(Mutex<bool>, Condvar)>) {
     let signal = chan_signal::notify(&[Signal::HUP, Signal::INT]);
     thread::spawn(move || loop {
         ::util::set_thread_name("syncookied/sig");
         match signal.recv().unwrap() {
             Signal::HUP => {
                 println!("SIGHUP received, reloading configuration");
-                let uptime_readers = config::configure().iter().map(|&(ip, ref addr)|
+                let uptime_readers = config::configure(&path).iter().map(|&(ip, ref addr)|
                                         (ip, Box::new(uptime::UdpReader::new(addr.to_owned())) as Box<UptimeReader>)
                                        ).collect();
                 /* wait for old readers to die */
@@ -254,7 +255,7 @@ fn handle_signals(reload_lock: Arc<(Mutex<bool>, Condvar)>) {
     });
 }
 
-fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, qlen: u32, first_cpu: usize, uptime_readers: Vec<(Ipv4Addr, Box<UptimeReader>)>) {
+fn run(config: PathBuf, rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, qlen: u32, first_cpu: usize, uptime_readers: Vec<(Ipv4Addr, Box<UptimeReader>)>) {
     let rx_nm = Arc::new(Mutex::new(NetmapDescriptor::new(rx_iface).unwrap()));
     let multi_if = rx_iface != tx_iface;
     let tx_nm = if multi_if {
@@ -278,7 +279,7 @@ fn run(rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, qlen: u
 
     crossbeam::scope(|scope| {
         let reload_lock = Arc::new((Mutex::new(false), Condvar::new()));
-        handle_signals(reload_lock.clone());
+        handle_signals(config, reload_lock.clone());
 
         scope.spawn(move || 
                     run_uptime_readers(reload_lock.clone(), uptime_readers));
@@ -394,6 +395,13 @@ fn main() {
                                      .value_name("ip:port")
                                      .help("ip:port to listen on"))
                               )
+                              .arg(Arg::with_name("config")
+                                   .short("c")
+                                   .long("config")
+                                   .value_name("file")
+                                   .help("path to hosts.yml file")
+                                   .required(false)
+                                   .takes_value(true))
                               .arg(Arg::with_name("in")
                                    .short("i")
                                    .long("input-interface")
@@ -439,6 +447,7 @@ fn main() {
         let addr = matches.value_of("addr").unwrap_or("127.0.0.1:1488"); 
         uptime::run_server(addr);
     } else {
+        let conf = matches.value_of("config").unwrap_or("hosts.yml");
         let rx_iface = matches.value_of("in").expect("Expected valid input interface");
         let tx_iface = matches.value_of("out").unwrap_or(rx_iface);
         let rx_mac: MacAddr = matches.value_of("in-mac")
@@ -457,12 +466,13 @@ fn main() {
                          .map(|x| usize::from_str(x).expect("Expected cpu number"))
                          .unwrap_or(0);
 
+        let config = PathBuf::from(conf);
         let uptime_readers =
-            config::configure().iter().map(|&(ip, ref addr)|
+            config::configure(&config).iter().map(|&(ip, ref addr)|
                 (ip, Box::new(uptime::UdpReader::new(addr.to_owned())) as Box<UptimeReader>)
             ).collect();
 
         println!("interfaces: [Rx: {}/{}, Tx: {}/{}] Cores: {}", rx_iface, rx_mac, tx_iface, tx_mac, ncpus);
-        run(&rx_iface, &tx_iface, rx_mac, tx_mac, qlen, cpu, uptime_readers);
+        run(config, &rx_iface, &tx_iface, rx_mac, tx_mac, qlen, cpu, uptime_readers);
     }
 }
