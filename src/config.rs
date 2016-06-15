@@ -81,8 +81,8 @@ fn parse_file(path: &Path) -> Vec<HostConfig> {
 }
 
 // some crazy shit
-pub fn configure() -> Vec<(Ipv4Addr, String)> {
-    let hosts = parse_file(Path::new("hosts.yml"));
+pub fn configure(path: &Path) -> Vec<(Ipv4Addr, String)> {
+    let hosts = parse_file(path);
     let mut ips = vec![];
     ::RoutingTable::clear();
     for host in hosts {
