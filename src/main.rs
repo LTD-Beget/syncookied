@@ -169,7 +169,6 @@ impl RoutingTable {
     }
 }
 
-#[derive(Clone)]
 pub struct HostConfiguration {
     mac: MacAddr,
     tcp_timestamp: u64,
@@ -187,6 +186,23 @@ impl HostConfiguration {
             tcp_cookie_time: 0,
             syncookie_secret: [[0;17];2],
             state_table: StateTable::new(1024 * 1024),
+            filters: Arc::new(Mutex::new(filters)),
+        }
+    }
+}
+
+impl Clone for HostConfiguration {
+    fn clone(&self) -> Self {
+        let filters = {
+            let ref filters = *self.filters.lock();
+            filters.clone()
+        };
+        HostConfiguration {
+            mac: self.mac,
+            tcp_timestamp: self.tcp_timestamp.clone(),
+            tcp_cookie_time: self.tcp_cookie_time.clone(),
+            syncookie_secret: self.syncookie_secret.clone(),
+            state_table: self.state_table.clone(),
             filters: Arc::new(Mutex::new(filters)),
         }
     }
