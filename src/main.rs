@@ -11,6 +11,7 @@ extern crate intmap;
 extern crate fnv;
 extern crate bounded_spsc_queue as spsc;
 extern crate chan_signal;
+extern crate pcap;
 
 use std::fmt;
 use std::cell::RefCell;
@@ -43,6 +44,7 @@ mod rx;
 mod uptime;
 mod arp;
 mod config;
+mod filter;
 use uptime::UptimeReader;
 use packet::{IngressPacket};
 use netmap::{Direction,NetmapDescriptor};

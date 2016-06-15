@@ -14,6 +14,11 @@ parking_lot = "0.2.6"
 fnv = "1.0.2"
 chan-signal = "0.1.6"
 
+[dependencies.pcap]
+git = "https://github.com/polachok/pcap"
+rev = "a2bdf2f2a1b9408e69131ba6ae0a46efd04175f1"
+branch = "offline-bpf"
+
 [dependencies.scheduler]
 git = "https://github.com/polachok/rust-scheduler"
 rev = "53b832905bf61ab8e8513e1fd9341a65d850ef27"
