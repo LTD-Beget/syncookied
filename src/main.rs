@@ -33,6 +33,8 @@ use std::hash::BuildHasherDefault;
 use clap::{Arg, App, AppSettings, SubCommand};
 use chan_signal::Signal;
 
+use pcap::BpfProgram;
+
 mod netmap;
 mod cookie;
 mod sha1;
@@ -102,9 +104,9 @@ impl StateTable {
 pub struct RoutingTable;
 
 impl RoutingTable {
-    fn add_host(ip: Ipv4Addr, mac: MacAddr) {
-        println!("Configuration: {} -> {}", ip, mac);
-        let host_conf = HostConfiguration::new(mac);
+    fn add_host(ip: Ipv4Addr, mac: MacAddr, filters: Vec<BpfProgram>) {
+        println!("Configuration: {} -> {} Filters: {}", ip, mac, filters.len());
+        let host_conf = HostConfiguration::new(mac, filters);
         let mut w = GLOBAL_HOST_CONFIGURATION.write();
 
         w.insert(ip, host_conf);
@@ -167,23 +169,25 @@ impl RoutingTable {
     }
 }
 
-#[derive(Debug,Clone)]
+#[derive(Clone)]
 pub struct HostConfiguration {
     mac: MacAddr,
     tcp_timestamp: u64,
     tcp_cookie_time: u64,
     syncookie_secret: [[u32;17];2],
     state_table: StateTable,
+    filters: Arc<Mutex<Vec<BpfProgram>>>,
 }
 
 impl HostConfiguration {
-    fn new(mac: MacAddr) -> Self {
+    fn new(mac: MacAddr, filters: Vec<BpfProgram>) -> Self {
         HostConfiguration {
             mac: mac,
             tcp_timestamp: 0,
             tcp_cookie_time: 0,
             syncookie_secret: [[0;17];2],
             state_table: StateTable::new(1024 * 1024),
+            filters: Arc::new(Mutex::new(filters)),
         }
     }
 }

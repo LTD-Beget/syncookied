@@ -28,8 +28,8 @@ pub fn configure(path: &Path) -> Vec<(Ipv4Addr, String)> {
     let mut ips = vec![];
     ::RoutingTable::clear();
     for host in hosts {
-        ::RoutingTable::add_host(host.ip, host.mac);
-        ::RoutingTable::with_host_config(host.ip, |hc| println!("{:?}", hc));
+        ::RoutingTable::add_host(host.ip, host.mac, host.filters);
+        //::RoutingTable::with_host_config(host.ip, |hc| println!("{:?}", hc));
         ips.push((host.ip, host.local_ip));
     }
     ips

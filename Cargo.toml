@@ -16,7 +16,7 @@ chan-signal = "0.1.6"
 
 [dependencies.pcap]
 git = "https://github.com/polachok/pcap"
-rev = "a2bdf2f2a1b9408e69131ba6ae0a46efd04175f1"
+rev = "e564f4354bfb5c94366e070d0d684ad134882ea7"
 branch = "offline-bpf"
 
 [dependencies.scheduler]
