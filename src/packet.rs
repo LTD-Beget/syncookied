@@ -13,6 +13,7 @@ use pnet::util::MacAddr;
 use ::cookie;
 use ::csum;
 use ::filter;
+use ::filter::FilterAction;
 
 pub const MIN_REPLY_BUF_LEN: usize = 74;
 
@@ -387,13 +388,18 @@ fn handle_ipv4_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket) -> Act
         pkt.ipv4_source = header.get_source();
         pkt.ipv4_destination = header.get_destination();
         let mut fwd_mac = MacAddr::new(0xff, 0xff, 0xff, 0xff, 0xff, 0xff);
-        let mut drop = false;
+        let mut filter_action = None;
         if ::RoutingTable::with_host_config(pkt.ipv4_destination, |hc| {
             fwd_mac = hc.mac;
             let ref filters = *hc.filters.lock();
-            drop = !filter::matches(&filters, bytes);
+            filter_action = filter::matches(&filters, bytes);
         }) == None {
             return Action::Drop;
+        }
+        match filter_action {
+            None => {},
+            Some(FilterAction::Pass) => {},
+            Some(FilterAction::Drop) => return Action::Drop,
         }
         handle_transport_protocol(header.get_next_level_protocol(),
                                   header.payload(),

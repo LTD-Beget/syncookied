@@ -7,6 +7,12 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::io::BufReader;
 
+#[derive(Debug,Copy,Clone,PartialEq,Eq)]
+pub enum FilterAction {
+    Drop,
+    Pass
+}
+
 pub struct RuleLoader {
     cap: pcap::Capture<Dead>,
 }
@@ -29,6 +35,11 @@ impl RuleLoader {
     }
 }
 
-pub fn matches(filters: &[BpfJitFilter], buf: &[u8]) -> bool {
-    filters.iter().all(|bpf| bpf.matched(buf))
+pub fn matches(filters: &[(BpfJitFilter,FilterAction)], buf: &[u8]) -> Option<FilterAction> {
+    for &(ref bpf, ref action) in filters {
+        if bpf.matched(buf) {
+            return Some(*action);
+        }
+    }
+    return None;
 }

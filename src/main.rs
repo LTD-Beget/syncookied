@@ -105,7 +105,7 @@ impl StateTable {
 pub struct RoutingTable;
 
 impl RoutingTable {
-    fn add_host(ip: Ipv4Addr, mac: MacAddr, filters: Vec<BpfJitFilter>) {
+    fn add_host(ip: Ipv4Addr, mac: MacAddr, filters: Vec<(BpfJitFilter,filter::FilterAction)>) {
         println!("Configuration: {} -> {} Filters: {}", ip, mac, filters.len());
         let host_conf = HostConfiguration::new(mac, filters);
         let mut w = GLOBAL_HOST_CONFIGURATION.write();
@@ -176,11 +176,11 @@ pub struct HostConfiguration {
     tcp_cookie_time: u64,
     syncookie_secret: [[u32;17];2],
     state_table: StateTable,
-    filters: Arc<Mutex<Vec<BpfJitFilter>>>,
+    filters: Arc<Mutex<Vec<(BpfJitFilter,filter::FilterAction)>>>,
 }
 
 impl HostConfiguration {
-    fn new(mac: MacAddr, filters: Vec<BpfJitFilter>) -> Self {
+    fn new(mac: MacAddr, filters: Vec<(BpfJitFilter,filter::FilterAction)>) -> Self {
         HostConfiguration {
             mac: mac,
             tcp_timestamp: 0,

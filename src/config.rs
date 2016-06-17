@@ -6,7 +6,7 @@ use std::fs::File;
 use std::str::FromStr;
 use std::io::Read;
 use ::pnet::util::MacAddr;
-use ::filter::RuleLoader;
+use ::filter::{RuleLoader,FilterAction};
 use ::pcap;
 use ::bpfjit::BpfJitFilter;
 
@@ -20,7 +20,7 @@ struct HostConfig {
     ip: Ipv4Addr,
     local_ip: String,
     mac: MacAddr,
-    filters: Vec<BpfJitFilter>,
+    filters: Vec<(BpfJitFilter,FilterAction)>,
 }
 
 // some crazy shit
@@ -78,17 +78,26 @@ impl ConfigLoader {
         }
     }
 
-    fn parse_filters(&self, doc: &Yaml) -> Vec<BpfJitFilter> {
+    fn parse_filters(&self, doc: &Yaml) -> Vec<(BpfJitFilter,FilterAction)> {
         let mut res = vec![];
         match *doc {
-            Yaml::Array(ref arr) => {
-                for entry in arr {
-                    if let &Yaml::String(ref s) = entry {
-                        if let Ok(bpf) = self.rule_loader.parse_rule(s) {
-                            res.push(bpf);
-                        }
-                    } else {
-                        println!("bad syntax in filter");
+            Yaml::Hash(ref h) => {
+                for (k, v) in h {
+                    match (k, v) {
+                        (&Yaml::String(ref key), &Yaml::String(ref val)) => {
+                            let action = match (val as &str) {
+                                "drop" => FilterAction::Drop,
+                                "pass" => FilterAction::Pass,
+                                _ => {
+                                    println!("filter action should be one of 'drop' or 'pass'");
+                                    return res;
+                                }
+                            };
+                            if let Ok(bpf) = self.rule_loader.parse_rule(key) {
+                                res.push((bpf, action));
+                            }
+                        },
+                        _ => println!("bad syntax in filter"),
                     }
                 }
             },
