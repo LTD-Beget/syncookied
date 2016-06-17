@@ -1,11 +1,6 @@
 use ::pcap;
 use ::pcap::Dead;
-use ::pcap::BpfProgram;
 use ::bpfjit::BpfJitFilter;
-use std::path::Path;
-use std::fs::File;
-use std::io::prelude::*;
-use std::io::BufReader;
 
 #[derive(Debug,Copy,Clone,PartialEq,Eq)]
 pub enum FilterAction {

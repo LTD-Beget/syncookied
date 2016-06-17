@@ -36,9 +36,6 @@ lazy_static! {
         }
         data
     };
-    static ref REPLY_TEMPLATE_SLICE: &'static [u8] = {
-        &REPLY_TEMPLATE[12..MIN_REPLY_BUF_LEN]
-    };
 }
 
 #[allow(dead_code)]
@@ -431,6 +428,7 @@ fn handle_ether_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket, mac: 
     }
 }
 
+#[allow(dead_code)]
 pub fn handle_arp(source_mac: MacAddr, source_ip: Ipv4Addr, dest_ip: Ipv4Addr, buf: &mut [u8]) -> Option<usize> {
     let mut ether = MutableEthernetPacket::new(buf).unwrap();
     let mut len = 0;

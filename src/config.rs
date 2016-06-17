@@ -7,7 +7,6 @@ use std::str::FromStr;
 use std::io::Read;
 use ::pnet::util::MacAddr;
 use ::filter::{RuleLoader,FilterAction};
-use ::pcap;
 use ::bpfjit::BpfJitFilter;
 
 // this parser seriously sucks ass, but i'm too tired atm
@@ -85,7 +84,7 @@ impl ConfigLoader {
                 for (k, v) in h {
                     match (k, v) {
                         (&Yaml::String(ref key), &Yaml::String(ref val)) => {
-                            let action = match (val as &str) {
+                            let action = match val as &str {
                                 "drop" => FilterAction::Drop,
                                 "pass" => FilterAction::Pass,
                                 _ => {
