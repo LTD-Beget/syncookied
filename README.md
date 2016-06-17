@@ -1,5 +1,8 @@
 syncookied
 ==========
+`syncookied` emulates linux kernel syncookie functionality by intercepting SYN packets
+and sending replies to them using the same cookie generation alghorithm. It can achieve
+better performance under SYN flood attacks thanks to kernel bypass (netmap).
 
 How to run
 ==========

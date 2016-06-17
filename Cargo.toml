@@ -1,8 +1,11 @@
 [package]
 name = "syncookied"
 version = "0.1.4"
+description = "syn flood protection system"
 authors = ["Alexander Polyakov <apolyakov@beget.ru>"]
 build = "build.rs"
+license = "GPL-2.0"
+readme = "README.md"
 
 [dependencies]
 libc = "0.2.11"
