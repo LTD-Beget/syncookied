@@ -389,7 +389,7 @@ fn handle_ipv4_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket) -> Act
         if ::RoutingTable::with_host_config(pkt.ipv4_destination, |hc| {
             fwd_mac = hc.mac;
             let ref filters = *hc.filters.lock();
-            filter_action = filter::matches(&filters, bytes);
+            filter_action = filter::matches(&filters, bytes).or(Some(hc.default))
         }) == None {
             return Action::Drop;
         }

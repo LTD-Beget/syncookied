@@ -103,9 +103,9 @@ impl StateTable {
 pub struct RoutingTable;
 
 impl RoutingTable {
-    fn add_host(ip: Ipv4Addr, mac: MacAddr, filters: Vec<(BpfJitFilter,filter::FilterAction)>) {
-        println!("Configuration: {} -> {} Filters: {}", ip, mac, filters.len());
-        let host_conf = HostConfiguration::new(mac, filters);
+    fn add_host(ip: Ipv4Addr, mac: MacAddr, default_policy: filter::FilterAction, filters: Vec<(BpfJitFilter,filter::FilterAction)>) {
+        println!("Configuration: {} -> {} Filters: {} Default policy: {:?}", ip, mac, filters.len(), default_policy);
+        let host_conf = HostConfiguration::new(mac, filters, default_policy);
         let mut w = GLOBAL_HOST_CONFIGURATION.write();
 
         w.insert(ip, host_conf);
@@ -175,10 +175,11 @@ pub struct HostConfiguration {
     syncookie_secret: [[u32;17];2],
     state_table: StateTable,
     filters: Arc<Mutex<Vec<(BpfJitFilter,filter::FilterAction)>>>,
+    default: filter::FilterAction,
 }
 
 impl HostConfiguration {
-    fn new(mac: MacAddr, filters: Vec<(BpfJitFilter,filter::FilterAction)>) -> Self {
+    fn new(mac: MacAddr, filters: Vec<(BpfJitFilter,filter::FilterAction)>, default: filter::FilterAction) -> Self {
         HostConfiguration {
             mac: mac,
             tcp_timestamp: 0,
@@ -186,6 +187,7 @@ impl HostConfiguration {
             syncookie_secret: [[0;17];2],
             state_table: StateTable::new(1024 * 1024),
             filters: Arc::new(Mutex::new(filters)),
+            default: default,
         }
     }
 }
@@ -203,6 +205,7 @@ impl Clone for HostConfiguration {
             syncookie_secret: self.syncookie_secret.clone(),
             state_table: self.state_table.clone(),
             filters: Arc::new(Mutex::new(filters)),
+            default: self.default.clone(),
         }
     }
 }
