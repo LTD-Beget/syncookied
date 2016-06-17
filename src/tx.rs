@@ -65,7 +65,7 @@ impl<'a> Sender<'a> {
         scheduler::set_self_policy(Policy::Fifo, 20).expect("setting sched policy failed");
 
         /* wait for card to reinitialize */
-        thread::sleep(Duration::new(1, 0));
+        thread::sleep(Duration::new(1, self.ring_num as u32 * 100));
         println!("[TX#{}] started", self.ring_num);
 
         let mut before = time::Instant::now();
