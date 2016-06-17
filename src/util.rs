@@ -1,3 +1,4 @@
+/// Utility functions
 use std::path::{PathBuf};
 use std::fs::{File,OpenOptions};
 use std::io::{self,Write,Read};
@@ -14,6 +15,7 @@ pub fn set_thread_name(name: &str) {
     file.write_all(name.as_bytes()).ok();
 }
 
+/// enable/disable syncookies on linux
 pub fn set_syncookies(val: u8) -> Result<(), io::Error> {
     match OpenOptions::new()
         .write(true)
@@ -31,6 +33,7 @@ pub fn get_cpu_count() -> usize {
     }
 }
 
+// TODO: use from_str and drop this
 pub fn parse_mac(text: &str) -> Result<MacAddr, ParseIntError> {
     let mut result = [0, 0, 0, 0, 0, 0];
     for (idx, word) in text.split(':').enumerate() {

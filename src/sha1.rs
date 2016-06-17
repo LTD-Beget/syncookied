@@ -1,3 +1,4 @@
+/// Just a wrapper around C/assembly functions
 #[allow(dead_code)]
 #[link(name = "asm")]
 extern "C" {

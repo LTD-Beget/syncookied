@@ -1,7 +1,9 @@
+/// Functions related to tcp secret reading and updating
 use std::io;
 use std::net::Ipv4Addr;
 
 pub trait UptimeReader: Send {
+    /// returns contents of /proc/tcp_secrets file
     fn read(&self) -> io::Result<Vec<u8>>;
 }
 
@@ -20,6 +22,7 @@ impl UptimeReader for LocalReader {
     }
 }
 
+/// Receives secrets over udp
 pub struct UdpReader {
     addr: String,
 }
@@ -51,6 +54,9 @@ impl UptimeReader for UdpReader {
     }
 }
 
+// TODO: parser should probably be split into
+// its own function
+/// parses tcp_secrets and updates global table
 pub fn update(ip: Ipv4Addr, buf: Vec<u8>) {
     use std::io::prelude::*;
     use std::io::BufReader;
@@ -103,6 +109,7 @@ pub fn update(ip: Ipv4Addr, buf: Vec<u8>) {
     });
 }
 
+/// main function in "server" mode
 pub fn run_server(addr: &str) {
     use std::net::UdpSocket;
 

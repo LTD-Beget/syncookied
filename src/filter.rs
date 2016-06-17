@@ -1,3 +1,4 @@
+/// Filtering is implemented with bpf filters
 use ::pcap;
 use ::pcap::Dead;
 use ::bpfjit::BpfJitFilter;
@@ -18,6 +19,10 @@ impl RuleLoader {
             cap: pcap::Capture::dead(pcap::Linktype(12 /* RAW IP */)).unwrap(),
         }
     }
+
+    // Filters are compiled to bpf bytecode by libcap
+    // and then translated to amd64 machine instructions
+    // using bpfjit (FreeBSD's BPF JIT compiler)
     pub fn parse_rule(&self, rule: &str) -> Result<BpfJitFilter,pcap::Error> {
         use std::mem;
         match self.cap.compile(rule) {

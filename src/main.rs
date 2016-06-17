@@ -50,6 +50,7 @@ use uptime::UptimeReader;
 use packet::{IngressPacket};
 use netmap::{Direction,NetmapDescriptor};
 
+// TODO: split "routing" into its own file
 lazy_static! {
     /* maps public IP to tcp parameters */
     static ref GLOBAL_HOST_CONFIGURATION: RwLock<BTreeMap<Ipv4Addr, HostConfiguration>> = {
@@ -58,6 +59,9 @@ lazy_static! {
     };
 }
 
+// per thread "routing" table
+// it's updated periodically in Rx/Tx threads
+// lets us avoid contention
 thread_local!(pub static LOCAL_ROUTING_TABLE: RefCell<BTreeMap<Ipv4Addr, HostConfiguration>> = {
     let hm = BTreeMap::new();
     RefCell::new(hm)
@@ -74,11 +78,9 @@ impl fmt::Debug for StateTable {
     }
 }
 
+// TODO: implement removal in LocklessIntMap
+// note: currently unused
 impl StateTable {
-    fn oct_to_u32(octets: [u8; 4]) -> u32 {
-        (octets[0] as u32) << 24 | (octets[1] as u32) << 16 | (octets[2] as u32) << 8 | octets[3] as u32
-    }
-
     fn new(size: usize) -> Self {
         StateTable {
             map: LocklessIntMap::new(size, BuildHasherDefault::<fnv::FnvHasher>::default())
@@ -86,20 +88,23 @@ impl StateTable {
     }
 
     pub fn add_state(&mut self, ip: Ipv4Addr, source_port: u16, dest_port: u16, state: usize) {
-        let key: usize = (Self::oct_to_u32(ip.octets()) as usize) << 32
+        let int_ip = u32::from(ip) as usize;
+        let key: usize = int_ip << 32
                          | (source_port as usize) << 16
                          | dest_port as usize;
         self.map.insert(key, state);
     }
     
     pub fn get_state(&self, ip: Ipv4Addr, source_port: u16, dest_port: u16) -> Option<usize> {
-        let key: usize = (Self::oct_to_u32(ip.octets()) as usize) << 32
+        let int_ip = u32::from(ip) as usize;
+        let key: usize = int_ip << 32
                          | (source_port as usize) << 16
                          | dest_port as usize;
         self.map.get(key)
     }
 }
 
+// TODO: rename to sth. more appropriate (FibTable, ConfigTable?)
 pub struct RoutingTable;
 
 impl RoutingTable {
@@ -204,7 +209,7 @@ impl Clone for HostConfiguration {
             tcp_cookie_time: self.tcp_cookie_time.clone(),
             syncookie_secret: self.syncookie_secret.clone(),
             state_table: self.state_table.clone(),
-            filters: Arc::new(Mutex::new(filters)),
+            filters: Arc::new(Mutex::new(filters)), // this mutex is never contended
             default: self.default.clone(),
         }
     }
@@ -215,6 +220,7 @@ pub enum OutgoingPacket {
     Forwarded((usize, usize, MacAddr)),
 }
 
+// spawn threads updating tcp cookie secrets / uptime
 fn run_uptime_readers(reload_lock: Arc<(Mutex<bool>, Condvar)>, uptime_readers: Vec<(Ipv4Addr, Box<UptimeReader>)>) {
     let one_sec = Duration::new(1, 0);
     crossbeam::scope(|scope| {
@@ -279,7 +285,11 @@ fn handle_signals(path: PathBuf, reload_lock: Arc<(Mutex<bool>, Condvar)>) {
     });
 }
 
-fn run(config: PathBuf, rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac: MacAddr, qlen: u32, first_cpu: usize, uptime_readers: Vec<(Ipv4Addr, Box<UptimeReader>)>) {
+// TODO: too many parameters, put them into a struct
+fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
+       rx_mac: MacAddr, tx_mac: MacAddr,
+       qlen: u32, first_cpu: usize,
+       uptime_readers: Vec<(Ipv4Addr, Box<UptimeReader>)>) {
     let rx_nm = Arc::new(Mutex::new(NetmapDescriptor::new(rx_iface).unwrap()));
     let multi_if = rx_iface != tx_iface;
     let tx_nm = if multi_if {
@@ -308,6 +318,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str, rx_mac: MacAddr, tx_mac:
         scope.spawn(move || 
                     run_uptime_readers(reload_lock.clone(), uptime_readers));
 
+        // we spawn a thread per RX/TX queue
         for ring in 0..rx_count {
             let ring = ring;
             let (tx, rx) = spsc::make(qlen as usize);

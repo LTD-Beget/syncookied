@@ -1,3 +1,6 @@
+/// Implements SYN cookie creation / checking.
+/// Alghorithm is taken from linux kernel and translated to rust
+/// See also: http://lxr.free-electrons.com/source/net/ipv4/syncookies.c
 use std::mem;
 use std::net::Ipv4Addr;
 use std::num::Wrapping;
@@ -21,6 +24,8 @@ fn cookie_hash(source_addr: u32, dest_addr: u32, source_port: u16, dest_port: u1
     tmp[3] = count;
     tmp[4..4+17].copy_from_slice(&secret[0..17]);
     unsafe {
+        // TODO: use cargo features or runtime detection to choose the fastest
+        //
         //::sha1::sha1_transform_ssse3(tmp.as_mut_ptr().offset(16), tmp.as_ptr() as *const u8, 1);
         ::sha1::sha1_transform_avx(tmp.as_mut_ptr().offset(16), tmp.as_ptr() as *const u8, 1);
         //::sha1::sha_transform(tmp.as_mut_ptr().offset(16), tmp.as_ptr() as *const u8, tmp.as_mut_ptr().offset(16 + 5));
@@ -48,7 +53,7 @@ fn secure_tcp_syn_cookie(source_addr: u32, dest_addr: u32, source_port: u16,
             + ((Wrapping(cookie_hash(source_addr, dest_addr, source_port, dest_port, tcp_cookie_time, &secret[1])) + Wrapping(data)) & Wrapping(COOKIEMASK))).0
 }
 
-/// Return cookie and mss value
+/// Returns cookie and mss value
 #[inline]
 pub fn generate_cookie_init_sequence(source_addr: Ipv4Addr, dest_addr: Ipv4Addr,
                                      source_port: u16, dest_port: u16,
@@ -97,6 +102,7 @@ fn check_tcp_syn_cookie(cookie: u32, saddr: u32, daddr: u32,
     ((cookie - Wrapping(cookie_hash(saddr, daddr, sport, dport, (count - diff).0, &secret[1]))) & Wrapping(COOKIEMASK)).0
 }
 
+/// Checks cookie, returns MSS value if valid
 #[inline]
 pub fn cookie_check(source_addr: Ipv4Addr, dest_addr: Ipv4Addr,
                     source_port: u16, dest_port: u16, seq: u32,
@@ -133,6 +139,7 @@ fn test_cookie_init() {
 }
 */
 
+/// TCP options encoded in timestamp
 #[inline]
 pub fn synproxy_init_timestamp_cookie(wscale: u8, sperm: u8, ecn: u8, tcp_time_stamp: u32) -> u32 {
     let mut tsval: u32 = tcp_time_stamp & !0x3f;

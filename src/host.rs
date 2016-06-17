@@ -1,3 +1,4 @@
+/// Host ring loop (not used)
 fn host_rx_loop(ring_num: usize, netmap: &mut NetmapDescriptor) {
         println!("HOST RX loop for ring {:?}", ring_num);
         println!("Rx rings: {:?}", netmap.get_rx_rings());

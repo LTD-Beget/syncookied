@@ -1,3 +1,7 @@
+/// TCP & IP checksums implementations
+/// actual checksumming is delegated to optimized
+/// C routines extracted from linux kernel
+// TODO: rewrite in rust
 use std::net::Ipv4Addr;
 
 use pnet::packet::Packet;
@@ -7,7 +11,9 @@ use pnet::packet::tcp::TcpPacket;
 
 #[link(name = "asm")]
 extern "C" {
+    // note: returns Big Endian
     fn csum_partial_folded(buff: *const u8, len: u32, wsum: u32) -> u16;
+    // note: returns Big Endian
     fn ip_compute_csum(buff: *const u8, len: u32) -> u16;
 }
 

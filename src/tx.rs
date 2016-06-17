@@ -1,7 +1,7 @@
+/// Transfer thread
 use std::mem;
 use std::time::{self,Duration};
 use std::thread;
-use ::spsc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use ::netmap::{self, NetmapDescriptor, TxSlot, NetmapSlot};
@@ -11,6 +11,7 @@ use ::scheduler;
 use ::scheduler::{CpuSet, Policy};
 use ::pnet::util::MacAddr;
 use ::pnet::packet::ethernet::MutableEthernetPacket;
+use ::spsc;
 use ::util;
 
 #[derive(Debug,Default)]
@@ -54,6 +55,7 @@ impl<'a> Sender<'a> {
         }
     }
 
+    // main transfer loop
     pub fn run(mut self) {
         println!("TX loop for ring {:?} starting. Rings: {:?}", self.ring_num, self.netmap.get_tx_rings());
 
@@ -74,7 +76,6 @@ impl<'a> Sender<'a> {
         self.update_routing_cache();
 
         loop {
-            //let fd = netmap.get_fd();
             /* block and wait for packet in queue */
             if let Some(_) = self.netmap.poll(netmap::Direction::Output) {
                 if let Some(ring) = self.netmap.tx_iter().next() {
@@ -88,11 +89,11 @@ impl<'a> Sender<'a> {
                         let source_mac = self.source_mac;
                         match self.chan.try_pop_with(|pkt| {
                             if rate < 1000 {
-                                    ::RoutingTable::sync_tables();
-                                }
-                                Self::send(pkt, slot, buf, stats, lock,
-                                           ring_num, source_mac);
-                            }) {
+                                ::RoutingTable::sync_tables();
+                            }
+                            Self::send(pkt, slot, buf, stats, lock,
+                                       ring_num, source_mac);
+                        }) {
                             None => thread::sleep(Duration::new(0, 100)),
                             Some(_) => { },
                         }
@@ -103,14 +104,13 @@ impl<'a> Sender<'a> {
                         let lock = &mut self.lock;
                         let ring_num = self.ring_num;
                         let source_mac = self.source_mac;
-                        match self.chan.try_pop() {
+                        match self.chan.try_pop_with(|pkt| {
+                                Self::send(pkt, slot, buf, stats, lock,
+                                           ring_num, source_mac);
+                        }) {
                             None => thread::sleep(Duration::new(0, 200)),
-                            Some(ref pkt) => { 
-								Self::send(pkt, slot, buf, stats, lock,
-													  ring_num, source_mac)
-							},
+                            Some(_) => { },
                         }
-
 /*
                         if rate <= 1000 {
                             break; // do tx sync on every packet if we receive

@@ -1,6 +1,6 @@
+/// Receiver thread
 use std::time::{self,Duration};
 use std::thread;
-use ::spsc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use ::netmap::{self, NetmapDescriptor, RxSlot};
@@ -11,6 +11,7 @@ use ::scheduler::{CpuSet, Policy};
 use ::pnet::util::MacAddr;
 use ::util;
 use ::libc;
+use ::spsc;
 use ::packet::Action;
 
 #[derive(Debug,Default)]
@@ -89,6 +90,7 @@ impl<'a> Receiver<'a> {
         ::RoutingTable::sync_tables();
     }
 
+    // main RX loop
     pub fn run(mut self) {
         println!("RX loop for ring {:?}", self.ring_num);
         println!("Rx rings: {:?}", self.netmap.get_rx_rings());
@@ -165,27 +167,6 @@ impl<'a> Receiver<'a> {
                                     },
                                     None => self.stats.queued += 1,
                                 }
-                                /*
-                                match self.chan_reply.try_push(OutgoingPacket::Ingress(packet)) {
-                                    None => self.stats.queued += 1,
-                                    Some(pkt) => {
-                                        self.stats.overflow += 1;
-                                        match self.chan_fwd {
-                                            /* fall back to chan fwd if available */
-                                            Some(ref chan) => match chan.try_push(pkt) {
-                                                    None => self.stats.queued += 1,
-                                                    Some(_) => { 
-                                                        self.stats.failed += 1;
-                                                    },
-                                            },
-                                            /* nothing to do, fail */
-                                            None => {
-                                                self.stats.failed += 1;
-                                            }
-                                        }
-                                    },
-                                }
-                                */
                             },
                         }
                     }

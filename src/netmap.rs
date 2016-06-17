@@ -1,3 +1,4 @@
+/// Wraps netmap_sys with some (unsafe) iterators
 extern crate netmap_sys;
 
 use ::libc;

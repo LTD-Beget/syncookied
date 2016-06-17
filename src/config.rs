@@ -1,3 +1,5 @@
+/// Configuration file parser and related functions
+
 use ::yaml_rust::{YamlLoader};
 use ::yaml_rust::yaml::Yaml;
 use std::net::Ipv4Addr;
@@ -9,10 +11,6 @@ use ::pnet::util::MacAddr;
 use ::filter::{RuleLoader,FilterAction};
 use ::bpfjit::BpfJitFilter;
 
-// this parser seriously sucks ass, but i'm too tired atm
-// and wanna get this shit out asap
-// TODO: better error reporting & stuff
-
 //#[derive(Debug)]
 #[derive(Clone)]
 struct HostConfig {
@@ -23,7 +21,7 @@ struct HostConfig {
     default_policy: FilterAction,
 }
 
-// some crazy shit
+// this is called on startup and reload
 pub fn configure(path: &Path) -> Vec<(Ipv4Addr, String)> {
     let hosts = ConfigLoader::new(path).load();
     let mut ips = vec![];
@@ -41,6 +39,8 @@ struct ConfigLoader {
     root: Vec<Yaml>,
 }
 
+// atm parser tries to ignore errors as much as possible
+// TODO: better error reporting & stuff
 impl ConfigLoader {
     pub fn new(path: &Path) -> Self {
         ConfigLoader {

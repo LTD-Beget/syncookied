@@ -1,3 +1,5 @@
+/// Packet processing logic
+
 use std::net::Ipv4Addr;
 
 use pnet::packet::Packet;
@@ -18,6 +20,8 @@ use ::filter::FilterAction;
 pub const MIN_REPLY_BUF_LEN: usize = 74;
 
 lazy_static! {
+    /// Some fields don't change ever so we just copy this template and then 
+    /// overwrite changed fields (see build_reply_with_template)
     static ref REPLY_TEMPLATE: Vec<u8> = {
         let mut data: Vec<u8> = vec![0;MIN_REPLY_BUF_LEN];
         /* prepare data common to all packets beforehand */
@@ -66,6 +70,7 @@ impl Default for IngressPacket {
     }
 }
 
+// useful for debugging
 #[allow(dead_code)]
 pub fn dump_input(packet_data: &[u8]) {
     let eth = EthernetPacket::new(packet_data).unwrap();
@@ -86,6 +91,7 @@ pub fn dump_input(packet_data: &[u8]) {
     };
 }
 
+// main input handler
 pub fn handle_input(packet_data: &[u8], mac: MacAddr) -> Action {
     let mut pkt: IngressPacket = Default::default();
     if let Some(eth) = EthernetPacket::new(packet_data) {
@@ -99,13 +105,165 @@ pub fn handle_input(packet_data: &[u8], mac: MacAddr) -> Action {
 }
 
 #[inline]
+fn handle_ether_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket, mac: MacAddr) -> Action {
+    let bytes = ethernet.packet();
+    let mut tmp_mac_arr = [0; 6];
+    tmp_mac_arr.copy_from_slice(&bytes[0..6]);
+    let mac_dest = MacAddr(tmp_mac_arr);
+
+    if mac_dest != mac {
+        return Action::Drop;
+    }
+    match ethernet.get_ethertype() {
+        EtherTypes::Ipv4 => {
+            tmp_mac_arr.copy_from_slice(&bytes[6..12]);
+            pkt.ether_source = MacAddr(tmp_mac_arr);
+            handle_ipv4_packet(ethernet, pkt)
+        },
+        _  => Action::Drop,
+    }
+}
+
+fn handle_ipv4_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket) -> Action {
+    let bytes = ethernet.payload();
+    let header = Ipv4Packet::new(bytes);
+    if let Some(header) = header {
+        pkt.ipv4_source = header.get_source();
+        pkt.ipv4_destination = header.get_destination();
+        let mut fwd_mac = MacAddr::new(0xff, 0xff, 0xff, 0xff, 0xff, 0xff);
+        let mut filter_action = None;
+        if ::RoutingTable::with_host_config(pkt.ipv4_destination, |hc| {
+            fwd_mac = hc.mac;
+            let ref filters = *hc.filters.lock();
+            filter_action = filter::matches(&filters, bytes).or(Some(hc.default))
+        }) == None {
+            return Action::Drop;
+        }
+        match filter_action {
+            None => {},
+            Some(FilterAction::Pass) => {},
+            Some(FilterAction::Drop) => return Action::Drop,
+        }
+        handle_transport_protocol(header.get_next_level_protocol(),
+                                  header.payload(),
+                                  fwd_mac,
+                                  pkt)
+    } else {
+        println!("Malformed IPv4 Packet");
+        Action::Drop
+    }
+}
+
+fn handle_transport_protocol(protocol: IpNextHeaderProtocol, packet: &[u8],
+                             fwd_mac: MacAddr,
+                             pkt: &mut IngressPacket) -> Action {
+    match protocol {
+        IpNextHeaderProtocols::Tcp  => handle_tcp_packet(packet, fwd_mac, pkt),
+        _ => Action::Forward(fwd_mac),
+    }
+}
+
+fn handle_tcp_packet(packet: &[u8], fwd_mac: MacAddr, pkt: &mut IngressPacket) -> Action {
+    use std::ptr;
+    let tcp = TcpPacket::new(packet);
+    if let Some(tcp) = tcp {
+        //println!("TCP Packet: {}:{} > {}:{}; length: {}", source,
+        //            tcp.get_source(), destination, tcp.get_destination(), packet.len());
+        if tcp.get_flags() & (TcpFlags::SYN | TcpFlags::ACK) == TcpFlags::SYN {
+            //println!("TCP Packet: {:?}", tcp);
+            pkt.tcp_source = tcp.get_source();
+            pkt.tcp_destination = tcp.get_destination();
+            pkt.tcp_sequence = tcp.get_sequence();
+
+            let in_options = tcp.get_options_iter();
+            if let Some(ts_option) = in_options.filter(|opt| (*opt).get_number() == TcpOptionNumbers::TIMESTAMPS).nth(0) {
+                unsafe { ptr::copy_nonoverlapping::<u8>(ts_option.payload()[0..4].as_ptr(), pkt.tcp_timestamp.as_mut_ptr(), 4) };
+            }
+            pkt.tcp_mss = 1460; /* HACK */
+            return Action::Reply(IngressPacket::default());
+        }
+        /* disable stateful firewall for now */
+        if false /* tcp.get_flags() & TcpFlags::ACK == TcpFlags::ACK */ {
+            let cookie = tcp.get_acknowledgement() - 1;
+            let tcp_saddr = tcp.get_source();
+            let tcp_daddr = tcp.get_destination();
+            let ip_saddr = pkt.ipv4_source;
+            let ip_daddr = pkt.ipv4_destination;
+            let seq = tcp.get_sequence();
+            let mut action = Action::Drop;
+            let mut new = false;
+
+            ::RoutingTable::with_host_config(ip_daddr, |hc| {
+                if hc.state_table.get_state(ip_saddr, tcp_saddr, tcp_daddr).is_some() {
+                    //println!("Have state for {}:{} -> {}:{}, passing", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
+                    action = Action::Forward(fwd_mac)
+                } else {
+                    //println!("State for {}:{} -> {}:{} not found", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
+                    /* println!("Check cookie for {}:{} -> {}:{}",
+                             ip_saddr, tcp_saddr, ip_daddr, tcp_daddr,
+                             ); */
+                    let res = cookie::cookie_check(ip_saddr, ip_daddr, tcp_saddr, tcp_daddr, 
+                                                   seq, cookie);
+                    //println!("check result is {:?}", res);
+                    if res.is_some() {
+                        new = true;
+                        action = Action::Forward(fwd_mac);
+                    } else {
+                        //println!("Bad cookie, drop");
+                    }
+                }
+            });
+            if new {
+                ::RoutingTable::with_host_config_mut(ip_daddr, |hc| {
+                    hc.state_table.add_state(ip_saddr, tcp_saddr, tcp_daddr, 1);
+                });
+            }
+            //println!("{}:{} -> {}:{} action: {:?}", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr, action);
+            return action;
+        }
+        Action::Forward(fwd_mac)
+    } else {
+        println!("Malformed TCP Packet");
+        Action::Drop
+    }
+}
+
+// Tx functions below
+
+#[allow(dead_code)]
+pub fn handle_arp(source_mac: MacAddr, source_ip: Ipv4Addr, dest_ip: Ipv4Addr, buf: &mut [u8]) -> Option<usize> {
+    let mut ether = MutableEthernetPacket::new(buf).unwrap();
+    let mut len = 0;
+
+    ether.set_source(source_mac);
+    ether.set_destination(MacAddr::new(0xff, 0xff, 0xff, 0xff, 0xff, 0xff));
+    ether.set_ethertype(EtherTypes::Arp);
+    len += ether.packet_size();
+
+    let mut arp = MutableArpPacket::new(ether.payload_mut()).unwrap();
+    arp.set_hardware_type(ArpHardwareTypes::Ethernet);
+    arp.set_protocol_type(EtherTypes::Ipv4);
+    arp.set_hw_addr_len(6);
+    arp.set_proto_addr_len(4);
+    arp.set_operation(ArpOperations::Request);
+    arp.set_sender_hw_addr(source_mac);
+    arp.set_sender_proto_addr(source_ip);
+    arp.set_target_hw_addr(MacAddr::new(0xff, 0xff, 0xff, 0xff, 0xff, 0xff));
+    arp.set_target_proto_addr(dest_ip);
+    len += arp.packet_size();
+    Some(len)
+}
+
+// main reply handler
+// returns packet size
+#[inline]
 pub fn handle_reply(pkt: &IngressPacket, source_mac: MacAddr, tx_slice: &mut [u8]) -> Option<usize> {
     Some(build_reply_with_template(pkt, source_mac, tx_slice))
 }
 
-#[inline]
-fn u32_to_oct(bits: u32) -> [u8; 4] {
-    [(bits >> 24) as u8, (bits >> 16) as u8, (bits >> 8) as u8, bits as u8]
+fn build_reply_with_template(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> usize {
+    reply[12..MIN_REPLY_BUF_LEN].copy_from_slice(&REPLY_TEMPLATE[12..MIN_REPLY_BUF_LEN]);
+    build_reply_fast(pkt, source_mac, reply)
 }
 
 fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> usize {
@@ -180,15 +338,7 @@ fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) 
     MIN_REPLY_BUF_LEN // ip.get_total_length()
 }
 
-fn build_reply_with_template(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> usize {
-    reply[12..MIN_REPLY_BUF_LEN].copy_from_slice(&REPLY_TEMPLATE[12..MIN_REPLY_BUF_LEN]);
-    build_reply_fast(pkt, source_mac, reply)
-    //reply[12..78].copy_from_slice(&REPLY_TEMPLATE[12..78]);
-    //build_reply_fast(pkt, source_mac, reply)
-    //build_reply_with_builder(pkt, source_mac, reply)
-}
-
-pub fn build_reply(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> usize {
+fn build_reply(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> usize {
     let mut len = 0;
     let ether_len;
     /* build ethernet packet */
@@ -304,150 +454,7 @@ pub fn build_reply(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -
     len
 }
 
-fn handle_tcp_packet(packet: &[u8], fwd_mac: MacAddr, pkt: &mut IngressPacket) -> Action {
-    use std::ptr;
-    let tcp = TcpPacket::new(packet);
-    if let Some(tcp) = tcp {
-        //println!("TCP Packet: {}:{} > {}:{}; length: {}", source,
-        //            tcp.get_source(), destination, tcp.get_destination(), packet.len());
-        if tcp.get_flags() & (TcpFlags::SYN | TcpFlags::ACK) == TcpFlags::SYN {
-            //println!("TCP Packet: {:?}", tcp);
-            pkt.tcp_source = tcp.get_source();
-            pkt.tcp_destination = tcp.get_destination();
-            pkt.tcp_sequence = tcp.get_sequence();
-
-            let in_options = tcp.get_options_iter();
-            if let Some(ts_option) = in_options.filter(|opt| (*opt).get_number() == TcpOptionNumbers::TIMESTAMPS).nth(0) {
-                unsafe { ptr::copy_nonoverlapping::<u8>(ts_option.payload()[0..4].as_ptr(), pkt.tcp_timestamp.as_mut_ptr(), 4) };
-            }
-            pkt.tcp_mss = 1460; /* HACK */
-            return Action::Reply(IngressPacket::default());
-        }
-        /* disable stateful firewall for now */
-        if false /* tcp.get_flags() & TcpFlags::ACK == TcpFlags::ACK */ {
-            let cookie = tcp.get_acknowledgement() - 1;
-            let tcp_saddr = tcp.get_source();
-            let tcp_daddr = tcp.get_destination();
-            let ip_saddr = pkt.ipv4_source;
-            let ip_daddr = pkt.ipv4_destination;
-            let seq = tcp.get_sequence();
-            let mut action = Action::Drop;
-            let mut new = false;
-
-            ::RoutingTable::with_host_config(ip_daddr, |hc| {
-                if hc.state_table.get_state(ip_saddr, tcp_saddr, tcp_daddr).is_some() {
-                    //println!("Have state for {}:{} -> {}:{}, passing", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
-                    action = Action::Forward(fwd_mac)
-                } else {
-                    //println!("State for {}:{} -> {}:{} not found", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
-                    /* println!("Check cookie for {}:{} -> {}:{}",
-                             ip_saddr, tcp_saddr, ip_daddr, tcp_daddr,
-                             ); */
-                    let res = cookie::cookie_check(ip_saddr, ip_daddr, tcp_saddr, tcp_daddr, 
-                                                   seq, cookie);
-                    //println!("check result is {:?}", res);
-                    if res.is_some() {
-                        new = true;
-                        action = Action::Forward(fwd_mac);
-                    } else {
-                        //println!("Bad cookie, drop");
-                    }
-                }
-            });
-            if new {
-                ::RoutingTable::with_host_config_mut(ip_daddr, |hc| {
-                    hc.state_table.add_state(ip_saddr, tcp_saddr, tcp_daddr, 1);
-                });
-            }
-            //println!("{}:{} -> {}:{} action: {:?}", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr, action);
-            return action;
-        }
-        Action::Forward(fwd_mac)
-    } else {
-        println!("Malformed TCP Packet");
-        Action::Drop
-    }
-}
-
-fn handle_transport_protocol(protocol: IpNextHeaderProtocol, packet: &[u8],
-                             fwd_mac: MacAddr,
-                             pkt: &mut IngressPacket) -> Action {
-    match protocol {
-        IpNextHeaderProtocols::Tcp  => handle_tcp_packet(packet, fwd_mac, pkt),
-        _ => Action::Forward(fwd_mac),
-    }
-}
-
-fn handle_ipv4_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket) -> Action {
-    let bytes = ethernet.payload();
-    let header = Ipv4Packet::new(bytes);
-    if let Some(header) = header {
-        pkt.ipv4_source = header.get_source();
-        pkt.ipv4_destination = header.get_destination();
-        let mut fwd_mac = MacAddr::new(0xff, 0xff, 0xff, 0xff, 0xff, 0xff);
-        let mut filter_action = None;
-        if ::RoutingTable::with_host_config(pkt.ipv4_destination, |hc| {
-            fwd_mac = hc.mac;
-            let ref filters = *hc.filters.lock();
-            filter_action = filter::matches(&filters, bytes).or(Some(hc.default))
-        }) == None {
-            return Action::Drop;
-        }
-        match filter_action {
-            None => {},
-            Some(FilterAction::Pass) => {},
-            Some(FilterAction::Drop) => return Action::Drop,
-        }
-        handle_transport_protocol(header.get_next_level_protocol(),
-                                  header.payload(),
-                                  fwd_mac,
-                                  pkt)
-    } else {
-        println!("Malformed IPv4 Packet");
-        Action::Drop
-    }
-}
-
 #[inline]
-fn handle_ether_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket, mac: MacAddr) -> Action {
-    let bytes = ethernet.packet();
-    let mut tmp_mac_arr = [0; 6];
-    tmp_mac_arr.copy_from_slice(&bytes[0..6]);
-    let mac_dest = MacAddr(tmp_mac_arr);
-
-    if mac_dest != mac {
-        return Action::Drop;
-    }
-    match ethernet.get_ethertype() {
-        EtherTypes::Ipv4 => {
-            tmp_mac_arr.copy_from_slice(&bytes[6..12]);
-            pkt.ether_source = MacAddr(tmp_mac_arr);
-            handle_ipv4_packet(ethernet, pkt)
-        },
-        _  => Action::Drop,
-    }
-}
-
-#[allow(dead_code)]
-pub fn handle_arp(source_mac: MacAddr, source_ip: Ipv4Addr, dest_ip: Ipv4Addr, buf: &mut [u8]) -> Option<usize> {
-    let mut ether = MutableEthernetPacket::new(buf).unwrap();
-    let mut len = 0;
-
-    ether.set_source(source_mac);
-    ether.set_destination(MacAddr::new(0xff, 0xff, 0xff, 0xff, 0xff, 0xff));
-    ether.set_ethertype(EtherTypes::Arp);
-    len += ether.packet_size();
-
-    let mut arp = MutableArpPacket::new(ether.payload_mut()).unwrap();
-    arp.set_hardware_type(ArpHardwareTypes::Ethernet);
-    arp.set_protocol_type(EtherTypes::Ipv4);
-    arp.set_hw_addr_len(6);
-    arp.set_proto_addr_len(4);
-    arp.set_operation(ArpOperations::Request);
-    arp.set_sender_hw_addr(source_mac);
-    arp.set_sender_proto_addr(source_ip);
-    arp.set_target_hw_addr(MacAddr::new(0xff, 0xff, 0xff, 0xff, 0xff, 0xff));
-    arp.set_target_proto_addr(dest_ip);
-    len += arp.packet_size();
-    Some(len)
+fn u32_to_oct(bits: u32) -> [u8; 4] {
+    [(bits >> 24) as u8, (bits >> 16) as u8, (bits >> 8) as u8, bits as u8]
 }
