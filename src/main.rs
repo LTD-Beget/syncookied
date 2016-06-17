@@ -11,6 +11,8 @@ extern crate intmap;
 extern crate fnv;
 extern crate bounded_spsc_queue as spsc;
 extern crate chan_signal;
+extern crate pcap;
+extern crate bpfjit;
 
 use std::fmt;
 use std::cell::RefCell;
@@ -32,6 +34,8 @@ use std::hash::BuildHasherDefault;
 use clap::{Arg, App, AppSettings, SubCommand};
 use chan_signal::Signal;
 
+use bpfjit::BpfJitFilter;
+
 mod netmap;
 mod cookie;
 mod sha1;
@@ -43,6 +47,7 @@ mod rx;
 mod uptime;
 mod arp;
 mod config;
+mod filter;
 use uptime::UptimeReader;
 use packet::{IngressPacket};
 use netmap::{Direction,NetmapDescriptor};
@@ -100,9 +105,9 @@ impl StateTable {
 pub struct RoutingTable;
 
 impl RoutingTable {
-    fn add_host(ip: Ipv4Addr, mac: MacAddr) {
-        println!("Configuration: {} -> {}", ip, mac);
-        let host_conf = HostConfiguration::new(mac);
+    fn add_host(ip: Ipv4Addr, mac: MacAddr, filters: Vec<(BpfJitFilter,filter::FilterAction)>) {
+        println!("Configuration: {} -> {} Filters: {}", ip, mac, filters.len());
+        let host_conf = HostConfiguration::new(mac, filters);
         let mut w = GLOBAL_HOST_CONFIGURATION.write();
 
         w.insert(ip, host_conf);
@@ -165,23 +170,41 @@ impl RoutingTable {
     }
 }
 
-#[derive(Debug,Clone)]
 pub struct HostConfiguration {
     mac: MacAddr,
     tcp_timestamp: u64,
     tcp_cookie_time: u64,
     syncookie_secret: [[u32;17];2],
     state_table: StateTable,
+    filters: Arc<Mutex<Vec<(BpfJitFilter,filter::FilterAction)>>>,
 }
 
 impl HostConfiguration {
-    fn new(mac: MacAddr) -> Self {
+    fn new(mac: MacAddr, filters: Vec<(BpfJitFilter,filter::FilterAction)>) -> Self {
         HostConfiguration {
             mac: mac,
             tcp_timestamp: 0,
             tcp_cookie_time: 0,
             syncookie_secret: [[0;17];2],
             state_table: StateTable::new(1024 * 1024),
+            filters: Arc::new(Mutex::new(filters)),
+        }
+    }
+}
+
+impl Clone for HostConfiguration {
+    fn clone(&self) -> Self {
+        let filters = {
+            let ref filters = *self.filters.lock();
+            filters.clone()
+        };
+        HostConfiguration {
+            mac: self.mac,
+            tcp_timestamp: self.tcp_timestamp.clone(),
+            tcp_cookie_time: self.tcp_cookie_time.clone(),
+            syncookie_secret: self.syncookie_secret.clone(),
+            state_table: self.state_table.clone(),
+            filters: Arc::new(Mutex::new(filters)),
         }
     }
 }
