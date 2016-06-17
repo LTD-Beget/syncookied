@@ -74,6 +74,8 @@ It's possible to filter traffic by adding "filters" section to host configuratio
   filters:
    tcp and dst port 53: drop
    tcp and dst port 22: pass
+   default: pass
 ```
 Filters are written in pcap syntax. Consult `pcap-filter(7)` for more information. 
-Default policy is "pass".
+Default policy is "pass". It can be changed by using `default` key.
+Note that filtering happens on layer 4.

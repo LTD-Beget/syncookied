@@ -20,6 +20,7 @@ struct HostConfig {
     local_ip: String,
     mac: MacAddr,
     filters: Vec<(BpfJitFilter,FilterAction)>,
+    default_policy: FilterAction,
 }
 
 // some crazy shit
@@ -28,7 +29,7 @@ pub fn configure(path: &Path) -> Vec<(Ipv4Addr, String)> {
     let mut ips = vec![];
     ::RoutingTable::clear();
     for host in hosts {
-        ::RoutingTable::add_host(host.ip, host.mac, host.filters);
+        ::RoutingTable::add_host(host.ip, host.mac, host.default_policy, host.filters);
         //::RoutingTable::with_host_config(host.ip, |hc| println!("{:?}", hc));
         ips.push((host.ip, host.local_ip));
     }
@@ -77,8 +78,10 @@ impl ConfigLoader {
         }
     }
 
-    fn parse_filters(&self, doc: &Yaml) -> Vec<(BpfJitFilter,FilterAction)> {
+    fn parse_filters(&self, doc: &Yaml) -> (FilterAction, Vec<(BpfJitFilter,FilterAction)>) {
         let mut res = vec![];
+        let mut default_policy = FilterAction::Pass;
+
         match *doc {
             Yaml::Hash(ref h) => {
                 for (k, v) in h {
@@ -89,9 +92,12 @@ impl ConfigLoader {
                                 "pass" => FilterAction::Pass,
                                 _ => {
                                     println!("filter action should be one of 'drop' or 'pass'");
-                                    return res;
+                                    return (default_policy, res);
                                 }
                             };
+                            if key == "default" {
+                                default_policy = action;
+                            }
                             if let Ok(bpf) = self.rule_loader.parse_rule(key) {
                                 res.push((bpf, action));
                             }
@@ -104,7 +110,7 @@ impl ConfigLoader {
                 println!("Bad filters syntax");
             }
         }
-        res
+        (default_policy, res)
     }
 
     fn parse_host(&self, doc: &Yaml) -> Option<HostConfig> {
@@ -112,6 +118,7 @@ impl ConfigLoader {
         let mut local_ip = None;
         let mut mac = None;
         let mut filters = vec![];
+        let mut default_policy = FilterAction::Pass;
 
         match *doc {
             Yaml::Hash(ref h) => {
@@ -130,7 +137,9 @@ impl ConfigLoader {
                         },
                         (&Yaml::String(ref key), _) => {
                             if key == "filters" {
-                                filters = self.parse_filters(v);
+                                let tuple = self.parse_filters(v);
+                                default_policy = tuple.0;
+                                filters = tuple.1;
                             }
                         },
                         _ => {
@@ -151,6 +160,7 @@ impl ConfigLoader {
                 local_ip: local_ip.unwrap(),
                 mac: mac.unwrap(),
                 filters: filters,
+                default_policy: default_policy,
             });
         }
         None
