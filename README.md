@@ -60,3 +60,17 @@ Notes
 `syncookied` has some options you may want to tune, see `syncookied --help`.
 If you have more than 1 interface on your server, you may want to look into -O to use second one for TX. 
 This greatly improves performance and latency as forwarding and syn-reply traffic is separated.
+
+Traffic filtering
+-----------------
+It's possible to filter traffic by adding "filters" section to host configuration like this:
+```
+- ip: 185.50.25.4
+  local_ip: 127.0.0.1:1488
+  mac: 0c:c4:7a:6b:0a:78
+  filters:
+   tcp and dst port 53: drop
+   tcp and dst port 22: pass
+```
+Filters are written in pcap syntax. Consult `pcap-filter(7)` for more information. 
+Default policy is "pass".
