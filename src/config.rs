@@ -8,6 +8,7 @@ use std::io::Read;
 use ::pnet::util::MacAddr;
 use ::filter::RuleLoader;
 use ::pcap;
+use ::bpfjit::BpfJitFilter;
 
 // this parser seriously sucks ass, but i'm too tired atm
 // and wanna get this shit out asap
@@ -19,7 +20,7 @@ struct HostConfig {
     ip: Ipv4Addr,
     local_ip: String,
     mac: MacAddr,
-    filters: Vec<pcap::BpfProgram>,
+    filters: Vec<BpfJitFilter>,
 }
 
 // some crazy shit
@@ -77,7 +78,7 @@ impl ConfigLoader {
         }
     }
 
-    fn parse_filters(&self, doc: &Yaml) -> Vec<pcap::BpfProgram> {
+    fn parse_filters(&self, doc: &Yaml) -> Vec<BpfJitFilter> {
         let mut res = vec![];
         match *doc {
             Yaml::Array(ref arr) => {

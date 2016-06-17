@@ -12,6 +12,7 @@ extern crate fnv;
 extern crate bounded_spsc_queue as spsc;
 extern crate chan_signal;
 extern crate pcap;
+extern crate bpfjit;
 
 use std::fmt;
 use std::cell::RefCell;
@@ -33,7 +34,7 @@ use std::hash::BuildHasherDefault;
 use clap::{Arg, App, AppSettings, SubCommand};
 use chan_signal::Signal;
 
-use pcap::BpfProgram;
+use bpfjit::BpfJitFilter;
 
 mod netmap;
 mod cookie;
@@ -104,7 +105,7 @@ impl StateTable {
 pub struct RoutingTable;
 
 impl RoutingTable {
-    fn add_host(ip: Ipv4Addr, mac: MacAddr, filters: Vec<BpfProgram>) {
+    fn add_host(ip: Ipv4Addr, mac: MacAddr, filters: Vec<BpfJitFilter>) {
         println!("Configuration: {} -> {} Filters: {}", ip, mac, filters.len());
         let host_conf = HostConfiguration::new(mac, filters);
         let mut w = GLOBAL_HOST_CONFIGURATION.write();
@@ -175,11 +176,11 @@ pub struct HostConfiguration {
     tcp_cookie_time: u64,
     syncookie_secret: [[u32;17];2],
     state_table: StateTable,
-    filters: Arc<Mutex<Vec<BpfProgram>>>,
+    filters: Arc<Mutex<Vec<BpfJitFilter>>>,
 }
 
 impl HostConfiguration {
-    fn new(mac: MacAddr, filters: Vec<BpfProgram>) -> Self {
+    fn new(mac: MacAddr, filters: Vec<BpfJitFilter>) -> Self {
         HostConfiguration {
             mac: mac,
             tcp_timestamp: 0,

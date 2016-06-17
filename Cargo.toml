@@ -14,9 +14,13 @@ parking_lot = "0.2.6"
 fnv = "1.0.2"
 chan-signal = "0.1.6"
 
+[dependencies.bpfjit]
+git = "https://github.com/polachok/bpfjit"
+rev = "2debf393d2cb1d7e0a8f9c2d3bb3cedcc17f2c76"
+
 [dependencies.pcap]
 git = "https://github.com/polachok/pcap"
-rev = "d61030082869a0c05b711791a092180c09ef8575"
+rev = "f5bff0b0b18b7054ea3e84db00ccf4787dc5bb4c"
 branch = "offline-bpf"
 
 [dependencies.scheduler]
