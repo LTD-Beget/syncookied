@@ -96,6 +96,7 @@ impl RecentSentTable {
     }
 }
 
+/*
 #[derive(Clone)]
 struct StateTable {
     map: LocklessIntMap<BuildHasherDefault<fnv::FnvHasher>>,
@@ -132,6 +133,7 @@ impl StateTable {
         self.map.get(key)
     }
 }
+*/
 
 // TODO: rename to sth. more appropriate (FibTable, ConfigTable?)
 pub struct RoutingTable;
@@ -208,7 +210,9 @@ pub struct HostConfiguration {
     tcp_cookie_time: u64,
     hz: u32,
     syncookie_secret: [[u32;17];2],
+    /*
     state_table: StateTable,
+    */
     recent_table: RecentSentTable,
     filters: Arc<Mutex<Vec<(BpfJitFilter,filter::FilterAction)>>>,
     default: filter::FilterAction,
@@ -222,7 +226,9 @@ impl HostConfiguration {
             tcp_cookie_time: 0,
             hz: 300,
             syncookie_secret: [[0;17];2],
+            /*
             state_table: StateTable::new(1024 * 1024),
+            */
             recent_table: RecentSentTable::new(),
             filters: Arc::new(Mutex::new(filters)),
             default: default,
@@ -242,7 +248,9 @@ impl Clone for HostConfiguration {
             tcp_cookie_time: self.tcp_cookie_time.clone(),
             hz: self.hz,
             syncookie_secret: self.syncookie_secret.clone(),
+            /*
             state_table: self.state_table.clone(),
+            */
             recent_table: self.recent_table.clone(),
             filters: Arc::new(Mutex::new(filters)), // this mutex is never contended
             default: self.default.clone(),
