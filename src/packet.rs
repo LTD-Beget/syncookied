@@ -173,8 +173,6 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: MacAddr, pkt: &mut IngressPacket) -
             //println!("TCP Packet: {:?}", tcp);
             let ip_daddr = pkt.ipv4_destination;
             let mut need_forward = false;
-            let hz = 300;
-            let timeout = hz * 60;
 
             pkt.tcp_source = tcp.get_source();
             pkt.tcp_destination = tcp.get_destination();
@@ -182,7 +180,7 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: MacAddr, pkt: &mut IngressPacket) -
             ::RoutingTable::with_host_config(ip_daddr, |hc| {
                 match hc.recent_table.get_last_touched(pkt.tcp_destination) {
                     Some(val) => {
-                        if hc.tcp_timestamp as usize - val > timeout {
+                        if hc.tcp_timestamp as u32 - val as u32 > hc.hz {
                             need_forward = true;
                         }
                     },
