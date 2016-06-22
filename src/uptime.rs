@@ -63,6 +63,7 @@ pub fn update(ip: Ipv4Addr, buf: Vec<u8>) {
 
     let mut jiffies = 0;
     let mut tcp_cookie_time = 0;
+    let mut hz = 300;
     let mut syncookie_secret: [[u32;17];2] = [[0;17];2];
 
     let reader = BufReader::new(&buf[..]);
@@ -74,6 +75,7 @@ pub fn update(ip: Ipv4Addr, buf: Vec<u8>) {
                     match idx {
                         0 => { jiffies = word.parse::<u64>().unwrap() },
                         1 => { tcp_cookie_time = word.parse::<u32>().unwrap() },
+                        2 => { hz = word.parse::<u32>().unwrap() },
                         _ => {},
                     }
                 }
@@ -102,6 +104,7 @@ pub fn update(ip: Ipv4Addr, buf: Vec<u8>) {
         use std::ptr;
         hc.tcp_timestamp = jiffies & 0xffffffff;
         hc.tcp_cookie_time = tcp_cookie_time as u64;
+        hc.hz = hz;
         unsafe {
             ptr::copy_nonoverlapping(syncookie_secret[0].as_ptr(), hc.syncookie_secret[0 as usize].as_mut_ptr(), 17);
             ptr::copy_nonoverlapping(syncookie_secret[1].as_ptr(), hc.syncookie_secret[1 as usize].as_mut_ptr(), 17);

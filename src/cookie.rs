@@ -143,21 +143,29 @@ fn test_cookie_init() {
 #[inline]
 pub fn synproxy_init_timestamp_cookie(wscale: u8, sperm: u8, ecn: u8, tcp_time_stamp: u32) -> u32 {
     let mut tsval: u32 = tcp_time_stamp & !0x3f;
+    let mut options: u32 = 0;
 
     if wscale != 0 {
-        tsval |= wscale as u32;
+        options |= wscale as u32;
     } else {
-        tsval |= 0xf;
+        options |= 0xf;
     }
 
     if sperm != 0 {
-        tsval |= 1 << 4;
+        options |= 1 << 4;
     }
 
     if ecn != 0 {
-        tsval |= 1 << 5;
+        options |= 1 << 5;
+    }
+
+    tsval |= options;
+    if tsval > tcp_time_stamp {
+        tsval >>= 6;
+        tsval -= 1;
+        tsval <<= 6;
+        tsval |= options;
     }
 
     tsval
 }
-

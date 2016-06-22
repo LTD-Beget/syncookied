@@ -171,9 +171,28 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: MacAddr, pkt: &mut IngressPacket) -
         //            tcp.get_source(), destination, tcp.get_destination(), packet.len());
         if tcp.get_flags() & (TcpFlags::SYN | TcpFlags::ACK) == TcpFlags::SYN {
             //println!("TCP Packet: {:?}", tcp);
+            let ip_daddr = pkt.ipv4_destination;
+            let mut need_forward = false;
+
             pkt.tcp_source = tcp.get_source();
             pkt.tcp_destination = tcp.get_destination();
             pkt.tcp_sequence = tcp.get_sequence();
+            ::RoutingTable::with_host_config(ip_daddr, |hc| {
+                match hc.recent_table.get_last_touched(pkt.tcp_destination) {
+                    Some(val) => {
+                        if hc.tcp_timestamp as u32 - val as u32 > hc.hz {
+                            need_forward = true;
+                        }
+                    },
+                    None => need_forward = true,
+                }
+            });
+            if need_forward {
+                ::RoutingTable::with_host_config_mut(ip_daddr, |hc| {
+                    hc.recent_table.touch(pkt.tcp_destination, hc.tcp_timestamp as usize);
+                });
+                return Action::Forward(fwd_mac);
+            }
 
             let in_options = tcp.get_options_iter();
             if let Some(ts_option) = in_options.filter(|opt| (*opt).get_number() == TcpOptionNumbers::TIMESTAMPS).nth(0) {
