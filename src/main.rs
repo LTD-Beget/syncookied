@@ -214,7 +214,7 @@ pub struct HostConfiguration {
     state_table: StateTable,
     */
     recent_table: RecentSentTable,
-    filters: Arc<Mutex<Vec<(BpfJitFilter,filter::FilterAction)>>>,
+    filters: Vec<(BpfJitFilter,filter::FilterAction)>,
     default: filter::FilterAction,
 }
 
@@ -230,7 +230,7 @@ impl HostConfiguration {
             state_table: StateTable::new(1024 * 1024),
             */
             recent_table: RecentSentTable::new(),
-            filters: Arc::new(Mutex::new(filters)),
+            filters: filters,
             default: default,
         }
     }
@@ -239,7 +239,7 @@ impl HostConfiguration {
 impl Clone for HostConfiguration {
     fn clone(&self) -> Self {
         let filters = {
-            let ref filters = *self.filters.lock();
+            let ref filters = self.filters;
             filters.clone()
         };
         HostConfiguration {
@@ -252,7 +252,7 @@ impl Clone for HostConfiguration {
             state_table: self.state_table.clone(),
             */
             recent_table: self.recent_table.clone(),
-            filters: Arc::new(Mutex::new(filters)), // this mutex is never contended
+            filters: filters, // this mutex is never contended
             default: self.default.clone(),
         }
     }
