@@ -300,21 +300,26 @@ fn handle_signals(path: PathBuf, reload_lock: Arc<(Mutex<bool>, Condvar)>) {
         match signal.recv().unwrap() {
             Signal::HUP => {
                 println!("SIGHUP received, reloading configuration");
-                let uptime_readers = config::configure(&path).iter().map(|&(ip, ref addr)|
-                                        (ip, Box::new(uptime::UdpReader::new(addr.to_owned())) as Box<UptimeReader>)
-                                       ).collect();
-                /* wait for old readers to die */
-                {
-                    let &(ref lock, ref cv) = &*reload_lock;
-                    let mut time_to_die = lock.lock();
-                    *time_to_die = true;
-                    while *time_to_die {
-                        cv.wait(&mut time_to_die); // unlocks mutex
-                    }
+                match config::configure(&path) {
+                    Ok(data) => {
+                        let uptime_readers = data.iter().map(|&(ip, ref addr)|
+                                                (ip, Box::new(uptime::UdpReader::new(addr.to_owned())) as Box<UptimeReader>)
+                                               ).collect();
+                        /* wait for old readers to die */
+                        {
+                            let &(ref lock, ref cv) = &*reload_lock;
+                            let mut time_to_die = lock.lock();
+                            *time_to_die = true;
+                            while *time_to_die {
+                                cv.wait(&mut time_to_die); // unlocks mutex
+                            }
+                        }
+                        println!("Old readers are dead, all hail to new readers");
+                        let reload_lock = reload_lock.clone();
+                        thread::spawn(move || run_uptime_readers(reload_lock.clone(), uptime_readers));
+                    },
+                    Err(e) => println!("Error parsing config file {}: {:?}", path.display(), e),
                 }
-                println!("Old readers are dead, all hail to new readers");
-                let reload_lock = reload_lock.clone();
-                thread::spawn(move || run_uptime_readers(reload_lock.clone(), uptime_readers));
             },
             Signal::INT => {
                 use std::process;
@@ -544,13 +549,17 @@ fn main() {
                          .map(|x| usize::from_str(x).expect("Expected cpu number"))
                          .unwrap_or(0);
 
-        let config = PathBuf::from(conf);
-        let uptime_readers =
-            config::configure(&config).iter().map(|&(ip, ref addr)|
-                (ip, Box::new(uptime::UdpReader::new(addr.to_owned())) as Box<UptimeReader>)
-            ).collect();
-
-        println!("interfaces: [Rx: {}/{}, Tx: {}/{}] Cores: {}", rx_iface, rx_mac, tx_iface, tx_mac, ncpus);
-        run(config, &rx_iface, &tx_iface, rx_mac, tx_mac, qlen, cpu, uptime_readers);
+        let config_path = PathBuf::from(conf);
+        match config::configure(&config_path) {
+            Ok(config) => {
+                let uptime_readers =
+                    config.iter().map(|&(ip, ref addr)|
+                        (ip, Box::new(uptime::UdpReader::new(addr.to_owned())) as Box<UptimeReader>)
+                    ).collect();
+                println!("interfaces: [Rx: {}/{}, Tx: {}/{}] Cores: {}", rx_iface, rx_mac, tx_iface, tx_mac, ncpus);
+                run(config_path, &rx_iface, &tx_iface, rx_mac, tx_mac, qlen, cpu, uptime_readers);
+            },
+            Err(e) => println!("Error parsing config file {}: {:?}", config_path.display(), e),
+        }
     }
 }

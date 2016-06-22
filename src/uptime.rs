@@ -1,6 +1,6 @@
 /// Functions related to tcp secret reading and updating
 use std::io;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr,SocketAddr};
 
 pub trait UptimeReader: Send {
     /// returns contents of /proc/tcp_secrets file
@@ -24,11 +24,11 @@ impl UptimeReader for LocalReader {
 
 /// Receives secrets over udp
 pub struct UdpReader {
-    addr: String,
+    addr: SocketAddr,
 }
 
 impl UdpReader {
-    pub fn new(addr: String) -> Self {
+    pub fn new(addr: SocketAddr) -> Self {
         UdpReader {
             addr: addr 
         }
@@ -46,7 +46,7 @@ impl UptimeReader for UdpReader {
         try!(socket.set_read_timeout(Some(timeout)));
         try!(socket.set_write_timeout(Some(timeout)));
         loop {
-            socket.send_to(b"YO", self.addr.as_str()).unwrap();
+            socket.send_to(b"YO", self.addr).unwrap();
             if let Ok(..) = socket.recv_from(&mut buf[0..]) {
                 return Ok(buf);
             }
