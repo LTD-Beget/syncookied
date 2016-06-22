@@ -68,6 +68,35 @@ thread_local!(pub static LOCAL_ROUTING_TABLE: RefCell<BTreeMap<Ipv4Addr, HostCon
 });
 
 #[derive(Clone)]
+struct RecentSentTable {
+    map: LocklessIntMap<BuildHasherDefault<fnv::FnvHasher>>,
+}
+
+impl fmt::Debug for RecentSentTable {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "RecentSentTable")
+    }
+}
+
+impl RecentSentTable {
+    fn new() -> Self {
+        RecentSentTable {
+            map: LocklessIntMap::new(65536 /* number of ports */, BuildHasherDefault::<fnv::FnvHasher>::default())
+        }
+    }
+
+    pub fn touch(&mut self, dest_port: u16, timestamp: usize) {
+        let key: usize = dest_port as usize;
+        self.map.insert(key, timestamp);
+    }
+
+    pub fn get_last_touched(&self, dest_port: u16) -> Option<usize> {
+        let key: usize = dest_port as usize;
+        self.map.get(key)
+    }
+}
+
+#[derive(Clone)]
 struct StateTable {
     map: LocklessIntMap<BuildHasherDefault<fnv::FnvHasher>>,
 }
@@ -179,6 +208,7 @@ pub struct HostConfiguration {
     tcp_cookie_time: u64,
     syncookie_secret: [[u32;17];2],
     state_table: StateTable,
+    recent_table: RecentSentTable,
     filters: Arc<Mutex<Vec<(BpfJitFilter,filter::FilterAction)>>>,
     default: filter::FilterAction,
 }
@@ -191,6 +221,7 @@ impl HostConfiguration {
             tcp_cookie_time: 0,
             syncookie_secret: [[0;17];2],
             state_table: StateTable::new(1024 * 1024),
+            recent_table: RecentSentTable::new(),
             filters: Arc::new(Mutex::new(filters)),
             default: default,
         }
@@ -209,6 +240,7 @@ impl Clone for HostConfiguration {
             tcp_cookie_time: self.tcp_cookie_time.clone(),
             syncookie_secret: self.syncookie_secret.clone(),
             state_table: self.state_table.clone(),
+            recent_table: self.recent_table.clone(),
             filters: Arc::new(Mutex::new(filters)), // this mutex is never contended
             default: self.default.clone(),
         }
