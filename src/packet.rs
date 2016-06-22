@@ -177,6 +177,11 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: MacAddr, pkt: &mut IngressPacket) -
             pkt.tcp_source = tcp.get_source();
             pkt.tcp_destination = tcp.get_destination();
             pkt.tcp_sequence = tcp.get_sequence();
+            /* we need to touch destination server listening socket from
+             * time to time to avoid getting into tcp_synq_no_recent_overflow()
+             * so here we keep track of how much time passed since SYN
+             * was sent and send one if it is > 1sec
+             */
             ::RoutingTable::with_host_config(ip_daddr, |hc| {
                 match hc.recent_table.get_last_touched(pkt.tcp_destination) {
                     Some(val) => {
