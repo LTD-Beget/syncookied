@@ -185,8 +185,10 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: MacAddr, pkt: &mut IngressPacket) -
             ::RoutingTable::with_host_config(ip_daddr, |hc| {
                 match hc.recent_table.get_last_touched(pkt.tcp_destination) {
                     Some(val) => {
-                        if hc.tcp_timestamp as u32 - val as u32 > hc.hz {
+			let diff = hc.tcp_timestamp as u32 - val as u32;
+                        if diff > 30 * hc.hz {
                             need_forward = true;
+			    println!("TOUCH port {} (val: {} ts: {} diff: {}, hz: {})", pkt.tcp_destination, hc.tcp_timestamp as u32, val as u32, diff, hc.hz);
                         }
                     },
                     None => need_forward = true,

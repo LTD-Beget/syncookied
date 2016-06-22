@@ -181,6 +181,19 @@ impl RoutingTable {
         })
     }
 
+    pub fn with_host_config_mut<F>(ip: Ipv4Addr, mut f: F) -> Option<()> where F: FnMut(&mut HostConfiguration) {
+        LOCAL_ROUTING_TABLE.with(|rt| {
+            let mut cache = rt.borrow_mut();
+            if let Some(hc) = cache.get_mut(&ip) {
+                f(hc);
+                Some(())
+            } else {
+                //println!("Config for {} not found", ip);
+                None
+            }
+        })
+    }
+
     pub fn with_host_config_global<F>(ip: Ipv4Addr, mut f: F) -> Option<()> where F: FnMut(&HostConfiguration) {
         let r = GLOBAL_HOST_CONFIGURATION.read();
         if let Some(hc) = r.get(&ip) {
@@ -192,7 +205,7 @@ impl RoutingTable {
         }
     }
 
-    pub fn with_host_config_mut<F>(ip: Ipv4Addr, mut f: F) -> Option<()> where F: FnMut(&mut HostConfiguration) {
+    pub fn with_host_config_global_mut<F>(ip: Ipv4Addr, mut f: F) -> Option<()> where F: FnMut(&mut HostConfiguration) {
         let mut w = GLOBAL_HOST_CONFIGURATION.write();
         if let Some(hc) = w.get_mut(&ip) {
             f(hc);

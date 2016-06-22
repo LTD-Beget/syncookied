@@ -100,7 +100,7 @@ pub fn update(ip: Ipv4Addr, buf: Vec<u8>) {
         }
     }
     //println!("jiffies: {}, tcp_cookie_time: {}, syncookie_secret: {:?}", jiffies, tcp_cookie_time, unsafe { syncookie_secret });
-    ::RoutingTable::with_host_config_mut(ip, |hc| {
+    ::RoutingTable::with_host_config_global_mut(ip, |hc| {
         use std::ptr;
         hc.tcp_timestamp = jiffies & 0xffffffff;
         hc.tcp_cookie_time = tcp_cookie_time as u64;
