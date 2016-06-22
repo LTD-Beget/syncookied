@@ -202,6 +202,7 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: MacAddr, pkt: &mut IngressPacket) -
             return Action::Reply(IngressPacket::default());
         }
         /* disable stateful firewall for now */
+        /*
         if false /* tcp.get_flags() & TcpFlags::ACK == TcpFlags::ACK */ {
             let cookie = tcp.get_acknowledgement() - 1;
             let tcp_saddr = tcp.get_source();
@@ -240,6 +241,7 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: MacAddr, pkt: &mut IngressPacket) -
             //println!("{}:{} -> {}:{} action: {:?}", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr, action);
             return action;
         }
+        */
         Action::Forward(fwd_mac)
     } else {
         println!("Malformed TCP Packet");
