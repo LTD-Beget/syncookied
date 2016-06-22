@@ -1,12 +1,12 @@
 /// Configuration file parser and related functions
 
-use ::yaml_rust::{YamlLoader};
+use ::yaml_rust::{self,YamlLoader};
 use ::yaml_rust::yaml::Yaml;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr,SocketAddr,AddrParseError};
 use std::path::Path;
 use std::fs::File;
 use std::str::FromStr;
-use std::io::Read;
+use std::io::{self,Read};
 use ::pnet::util::MacAddr;
 use ::filter::{RuleLoader,FilterAction};
 use ::bpfjit::BpfJitFilter;
@@ -15,15 +15,16 @@ use ::bpfjit::BpfJitFilter;
 #[derive(Clone)]
 struct HostConfig {
     ip: Ipv4Addr,
-    local_ip: String,
+    local_ip: SocketAddr,
     mac: MacAddr,
     filters: Vec<(BpfJitFilter,FilterAction)>,
     default_policy: FilterAction,
 }
 
 // this is called on startup and reload
-pub fn configure(path: &Path) -> Vec<(Ipv4Addr, String)> {
-    let hosts = ConfigLoader::new(path).load();
+pub fn configure(path: &Path) -> Result<Vec<(Ipv4Addr, SocketAddr)>, ConfigLoadingError> {
+    let loader = try!(ConfigLoader::new(path));
+    let hosts = try!(loader.load());
     let mut ips = vec![];
     ::RoutingTable::clear();
     for host in hosts {
@@ -31,7 +32,7 @@ pub fn configure(path: &Path) -> Vec<(Ipv4Addr, String)> {
         //::RoutingTable::with_host_config(host.ip, |hc| println!("{:?}", hc));
         ips.push((host.ip, host.local_ip));
     }
-    ips
+    Ok(ips)
 }
 
 struct ConfigLoader {
@@ -39,46 +40,82 @@ struct ConfigLoader {
     root: Vec<Yaml>,
 }
 
+#[derive(Debug)]
+pub enum ConfigLoadingError {
+    FileError(io::Error),
+    Yaml(yaml_rust::ScanError),
+    Semantic(String),
+}
+
+impl ConfigLoadingError {
+    fn semantic(s: String) -> Self {
+        ConfigLoadingError::Semantic(s)
+    }
+}
+
+impl From<io::Error> for ConfigLoadingError {
+    fn from(e: io::Error) -> Self {
+        ConfigLoadingError::FileError(e)
+    }
+}
+
+impl From<yaml_rust::ScanError> for ConfigLoadingError {
+    fn from(e: yaml_rust::ScanError) -> Self {
+        ConfigLoadingError::Yaml(e)
+    }
+}
+
+impl From<AddrParseError> for ConfigLoadingError {
+    fn from(e: AddrParseError) -> Self {
+        ConfigLoadingError::semantic(e.to_string())
+    }
+}
+
 // atm parser tries to ignore errors as much as possible
 // TODO: better error reporting & stuff
 impl ConfigLoader {
-    pub fn new(path: &Path) -> Self {
-        ConfigLoader {
+    pub fn new(path: &Path) -> Result<Self, ConfigLoadingError> {
+        let yaml = try!(Self::parse_file(path));
+        Ok(ConfigLoader {
             rule_loader: RuleLoader::new(),
-            root: Self::parse_file(path),
-        }
+            root: yaml,
+        })
     }
 
-    fn parse_file(path: &Path) -> Vec<Yaml> {
-        let mut f = File::open(path).expect("Expected hosts.yml in current directory");
+    fn parse_file(path: &Path) -> Result<Vec<Yaml>, ConfigLoadingError> {
+        let mut f = try!(File::open(path));
         let mut s = String::new();
 
-        f.read_to_string(&mut s).unwrap();
-        YamlLoader::load_from_str(&s).unwrap()
+        try!(f.read_to_string(&mut s));
+        YamlLoader::load_from_str(&s).map_err(|e| e.into())
     }
 
-    pub fn load(&self) -> Vec<HostConfig> {
+    pub fn load(&self) -> Result<Vec<HostConfig>, ConfigLoadingError> {
         let mut res = vec![];
         for doc in self.root.iter() {
-            res.extend_from_slice(&self.parse_doc(doc));
+            let doc = try!(self.parse_doc(doc));
+            res.extend_from_slice(&doc);
         }
-        res
+        Ok(res)
     }
 
-    fn parse_doc(&self, doc: &Yaml) -> Vec<HostConfig> {
-        let hosts = vec![];
+    fn parse_doc(&self, doc: &Yaml) -> Result<Vec<HostConfig>, ConfigLoadingError> {
         match *doc {
             Yaml::Array(ref arr) => {
-                return arr.iter().filter_map(|x| self.parse_host(x)).collect();
+                let mut result = vec![];
+                for item in arr {
+                    let item = try!(self.parse_host(item));
+                    result.push(item);
+                }
+                return Ok(result);
             },
             _ => {
-                println!("Top level must be an array of hashes");
-                return hosts;
+                return Err(ConfigLoadingError::semantic("Top level must be an array of hashes".to_owned()));
             }
         }
     }
 
-    fn parse_filters(&self, doc: &Yaml) -> (FilterAction, Vec<(BpfJitFilter,FilterAction)>) {
+    fn parse_filters(&self, doc: &Yaml) -> Result<(FilterAction, Vec<(BpfJitFilter,FilterAction)>), ConfigLoadingError> {
         let mut res = vec![];
         let mut default_policy = FilterAction::Pass;
 
@@ -91,29 +128,41 @@ impl ConfigLoader {
                                 "drop" => FilterAction::Drop,
                                 "pass" => FilterAction::Pass,
                                 _ => {
-                                    println!("filter action should be one of 'drop' or 'pass'");
-                                    return (default_policy, res);
+                                    return Err(ConfigLoadingError::semantic(
+                                            "filter action should be one of 'drop' or 'pass'".to_owned()
+                                            ));
                                 }
                             };
                             if key == "default" {
                                 default_policy = action;
+                                continue;
                             }
-                            if let Ok(bpf) = self.rule_loader.parse_rule(key) {
-                                res.push((bpf, action));
-                            }
+                            match self.rule_loader.parse_rule(key) {
+                                Ok(bpf) => res.push((bpf, action)),
+                                Err(e) => return Err(ConfigLoadingError::semantic(
+                                    e.to_string()
+                                )),
+                            };
                         },
-                        _ => println!("bad syntax in filter"),
+                        _ => return Err(ConfigLoadingError::semantic("bad syntax in filter".to_string())),
                     }
                 }
             },
             _ => {
-                println!("Bad filters syntax");
+                return Err(ConfigLoadingError::semantic("bad filter syntax".to_string()));
             }
         }
-        (default_policy, res)
+        Ok((default_policy, res))
     }
 
-    fn parse_host(&self, doc: &Yaml) -> Option<HostConfig> {
+    fn validate_mac(mac: &str) -> Result<MacAddr,ConfigLoadingError> {
+        match MacAddr::from_str(mac) {
+            Err(e) => Err(ConfigLoadingError::semantic(format!("{:?}", e))),
+            Ok(mac) => Ok(mac),
+        }
+    }
+
+    fn parse_host(&self, doc: &Yaml) -> Result<HostConfig,ConfigLoadingError> {
         let mut ip = None;
         let mut local_ip = None;
         let mut mac = None;
@@ -126,44 +175,39 @@ impl ConfigLoader {
                     match (k, v) {
                         (&Yaml::String(ref key), &Yaml::String(ref val)) => {
                             if key == "ip" {
-                                ip = Ipv4Addr::from_str(val).ok();
-                            } else if key == "local_ip" {
-                                local_ip = Some(val.clone());
+                                ip = Some(try!(Ipv4Addr::from_str(val)));
+                            } else if key == "local_ip" || key == "secrets_addr" {
+                                local_ip = Some(try!(SocketAddr::from_str(val)));
                             } else if key == "mac" {
-                                mac = MacAddr::from_str(val).ok();
+                                mac = Some(try!(Self::validate_mac(val)));
                             } else {
-                                println!("unknown key: {}", key);
+                                return Err(ConfigLoadingError::semantic(format!("unknown key: {}", key)));
                             }
                         },
                         (&Yaml::String(ref key), _) => {
                             if key == "filters" {
-                                let tuple = self.parse_filters(v);
+                                let tuple = try!(self.parse_filters(v));
                                 default_policy = tuple.0;
                                 filters = tuple.1;
                             }
                         },
                         _ => {
-                            println!("Invalid key {:?} or val {:?}", k, v);
-                            return None;
+                            return Err(ConfigLoadingError::semantic(format!("Invalid key {:?} or val {:?}", k, v)));
                         },
                     }
                 }
             },
             _ => {
-                println!("Invalid doc type");
-                return None;
+                return Err(ConfigLoadingError::semantic("Invalid doc type".into()));
             }
         }
-        if ip.is_some() && local_ip.is_some() && mac.is_some() {
-            return Some(HostConfig {
-                ip: ip.unwrap(),
-                local_ip: local_ip.unwrap(),
-                mac: mac.unwrap(),
-                filters: filters,
-                default_policy: default_policy,
-            });
-        }
-        None
+        return Ok(HostConfig {
+            ip: ip.unwrap(),
+            local_ip: local_ip.unwrap(),
+            mac: mac.unwrap(),
+            filters: filters,
+            default_policy: default_policy,
+        });
     }
 }
 
