@@ -69,7 +69,7 @@ Traffic filtering
 It's possible to filter traffic by adding "filters" section to host configuration like this:
 ```
 - ip: 185.50.25.4
-  local_ip: 127.0.0.1:1488
+  secrets_addr: 127.0.0.1:1488
   mac: 0c:c4:7a:6b:0a:78
   filters:
    tcp and dst port 53: drop
