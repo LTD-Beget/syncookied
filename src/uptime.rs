@@ -13,9 +13,8 @@ impl UptimeReader for LocalReader {
     fn read(&self) -> io::Result<Vec<u8>> {
         use std::fs::File;
         use std::io::prelude::*;
-        let mut file = File::open("/proc/beget_uptime")
-                        .or(File::open("/proc/tcp_secrets"))
-                        .unwrap();
+        let mut file = try!(File::open("/proc/beget_uptime")
+                        .or(File::open("/proc/tcp_secrets")));
         let mut buf = vec![];
         try!(file.read_to_end(&mut buf));
         Ok(buf)
