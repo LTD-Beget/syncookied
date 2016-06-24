@@ -1,20 +1,33 @@
-# 1 "sha1_ssse3_asm.S"
-# 1 "<built-in>"
-# 1 "<command-line>"
-# 1 "sha1_ssse3_asm.S"
-# 31 "sha1_ssse3_asm.S"
-# 1 "./linux/linkage.h" 1
+/*
+ * This is a SIMD SHA-1 implementation. It requires the Intel(R) Supplemental
+ * SSE3 instruction set extensions introduced in Intel Core Microarchitecture
+ * processors. CPUs supporting Intel(R) AVX extensions will get an additional
+ * boost.
+ *
+ * This work was inspired by the vectorized implementation of Dean Gaudet.
+ * Additional information on it can be found at:
+ *    http://www.arctic.org/~dean/crypto/sha1.html
+ *
+ * It was improved upon with more efficient vectorization of the message
+ * scheduling. This implementation has also been optimized for all current and
+ * several future generations of Intel CPUs.
+ *
+ * See this article for more information about the implementation details:
+ *   http://software.intel.com/en-us/articles/improving-the-performance-of-the-secure-hash-algorithm-1/
+ *
+ * Copyright (C) 2010, Intel Corp.
+ *   Authors: Maxim Locktyukhin <maxim.locktyukhin@intel.com>
+ *            Ronen Zohar <ronen.zohar@intel.com>
+ *
+ * Converted to AT&T syntax and adapted for inclusion in the Linux kernel:
+ *   Author: Mathias Krause <minipli@googlemail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ */
 
-
-
-# 1 "./linux/compiler.h" 1
-# 5 "./linux/linkage.h" 2
-# 1 "./linux/stringify.h" 1
-# 6 "./linux/linkage.h" 2
-# 1 "./linux/export.h" 1
-# 7 "./linux/linkage.h" 2
-# 32 "sha1_ssse3_asm.S" 2
-# 73 "sha1_ssse3_asm.S"
 .macro SHA1_VECTOR_ASM name
  .globl \name ; .align 4,0x90 ; \name:
 
