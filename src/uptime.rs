@@ -126,8 +126,14 @@ pub fn run_server(addr: &str) {
     loop {
         let mut buf = [0; 64];
         if let Ok((_,addr)) = socket.recv_from(&mut buf[0..]) {
-            if let Ok(buf) = LocalReader.read() {
-                socket.send_to(&buf[..], addr).unwrap();
+            match LocalReader.read() {
+                Ok(buf) => {
+                    match socket.send_to(&buf[..], addr) {
+                        Ok(_) => {},
+                        Err(e) => println!("Error sending: {}\n", e),
+                    }
+                }
+                Err(e) => println!("Error reading /proc/tcp_secrets: {}", e),
             }
         }
     }
