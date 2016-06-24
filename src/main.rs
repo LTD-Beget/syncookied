@@ -265,7 +265,7 @@ impl Clone for HostConfiguration {
             state_table: self.state_table.clone(),
             */
             recent_table: self.recent_table.clone(),
-            filters: filters, // this mutex is never contended
+            filters: filters,
             default: self.default.clone(),
         }
     }

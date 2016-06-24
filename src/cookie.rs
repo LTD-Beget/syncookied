@@ -1,6 +1,6 @@
 /// Implements SYN cookie creation / checking.
 /// Alghorithm is taken from linux kernel and translated to rust
-/// See also: http://lxr.free-electrons.com/source/net/ipv4/syncookies.c
+/// Reference implementation: http://lxr.free-electrons.com/source/net/ipv4/syncookies.c
 use std::mem;
 use std::net::Ipv4Addr;
 use std::num::Wrapping;
