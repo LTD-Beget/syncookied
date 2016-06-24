@@ -1,3 +1,10 @@
+/*
+ * arch/x86_64/lib/csum-partial.c
+ *
+ * This file contains network checksum routines that are better done
+ * in an architecture-specific manner due to speed.
+ */
+
 #include <linux/types.h>
 #include <stdint.h>
 
