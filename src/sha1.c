@@ -1,3 +1,9 @@
+/*
+ * SHA1 routine optimized to do word accesses rather than byte accesses,
+ * and to avoid unnecessary copies into the context array.
+ *
+ * This was based on the git SHA1 implementation.
+ */
 # 1 "sha1.c"
 # 1 "<built-in>"
 # 1 "<command-line>"
