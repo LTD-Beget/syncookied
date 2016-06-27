@@ -317,7 +317,7 @@ fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) 
             secret[0].copy_from_slice(&hc.syncookie_secret[0][0..17]);
             secret[1].copy_from_slice(&hc.syncookie_secret[1][0..17]);
         });
-        let (seq_num, mss_val) = cookie::generate_cookie_init_sequence(
+        let (seq_num, _mss_val) = cookie::generate_cookie_init_sequence(
             pkt.ipv4_source, pkt.ipv4_destination,
             pkt.tcp_source, pkt.tcp_destination, pkt.tcp_sequence,
             pkt.tcp_mss, cookie_time as u32, &secret);

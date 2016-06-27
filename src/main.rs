@@ -1,5 +1,7 @@
 #[macro_use]
 extern crate lazy_static;
+#[macro_use]
+extern crate log;
 extern crate libc;
 extern crate pnet;
 extern crate crossbeam;
