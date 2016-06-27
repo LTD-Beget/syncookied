@@ -149,7 +149,7 @@ fn handle_ipv4_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket) -> Act
                                   fwd_mac,
                                   pkt)
     } else {
-        println!("Malformed IPv4 Packet");
+        debug!("Malformed IPv4 Packet");
         Action::Drop
     }
 }
@@ -188,7 +188,7 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: MacAddr, pkt: &mut IngressPacket) -
 			let diff = hc.tcp_timestamp as u32 - val as u32;
                         if diff > 30 * hc.hz {
                             need_forward = true;
-			    println!("TOUCH port {} (val: {} ts: {} diff: {}, hz: {})", pkt.tcp_destination, hc.tcp_timestamp as u32, val as u32, diff, hc.hz);
+			    debug!("Touch port {} (val: {} ts: {} diff: {}, hz: {})", pkt.tcp_destination, hc.tcp_timestamp as u32, val as u32, diff, hc.hz);
                         }
                     },
                     None => need_forward = true,

@@ -509,7 +509,7 @@ impl NetmapDescriptor {
             return None;
         }
         if pollfd.revents & libc::POLLERR == libc::POLLERR {
-            println!("POLLERR!");
+            error!("POLLERR!");
             return None;
         }
         Some(())
