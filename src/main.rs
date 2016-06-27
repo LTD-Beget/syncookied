@@ -2,6 +2,7 @@
 extern crate lazy_static;
 #[macro_use]
 extern crate log;
+extern crate syslog;
 extern crate libc;
 extern crate pnet;
 extern crate crossbeam;
@@ -15,6 +16,7 @@ extern crate bounded_spsc_queue as spsc;
 extern crate chan_signal;
 extern crate pcap;
 extern crate bpfjit;
+extern crate chrono;
 
 use std::fmt;
 use std::cell::RefCell;
@@ -48,6 +50,7 @@ mod rx;
 mod uptime;
 mod config;
 mod filter;
+mod logging;
 use uptime::UptimeReader;
 use packet::{IngressPacket};
 use netmap::{Direction,NetmapDescriptor};
@@ -142,7 +145,7 @@ pub struct RoutingTable;
 
 impl RoutingTable {
     fn add_host(ip: Ipv4Addr, mac: MacAddr, default_policy: filter::FilterAction, filters: Vec<(BpfJitFilter,filter::FilterAction)>) {
-        println!("Configuration: {} -> {} Filters: {} Default policy: {:?}", ip, mac, filters.len(), default_policy);
+        info!("Configuration: {} -> {} Filters: {} Default policy: {:?}", ip, mac, filters.len(), default_policy);
         let host_conf = HostConfiguration::new(mac, filters, default_policy);
         let mut w = GLOBAL_HOST_CONFIGURATION.write();
 
@@ -177,7 +180,6 @@ impl RoutingTable {
                 f(hc);
                 Some(())
             } else {
-                //println!("Config for {} not found", ip);
                 None
             }
         })
@@ -190,7 +192,6 @@ impl RoutingTable {
                 f(hc);
                 Some(())
             } else {
-                //println!("Config for {} not found", ip);
                 None
             }
         })
@@ -202,7 +203,6 @@ impl RoutingTable {
             f(hc);
             Some(())
         } else {
-            //println!("Config for {} not found", ip);
             None
         }
     }
@@ -213,7 +213,6 @@ impl RoutingTable {
             f(hc);
             Some(())
         } else {
-            //println!("Config for {} not found", ip);
             None
         }
     }
@@ -284,18 +283,18 @@ fn run_uptime_readers(reload_lock: Arc<(Mutex<bool>, Condvar)>, uptime_readers: 
     crossbeam::scope(|scope| {
         for (ip, uptime_reader) in uptime_readers.into_iter() {
             let reload_lock = reload_lock.clone();
-            println!("Uptime reader for {} starting", ip);
+            info!("Uptime reader for {} starting", ip);
             scope.spawn(move|| loop {
                 ::util::set_thread_name(&format!("syncookied/{}", ip));
                 match uptime_reader.read() {
                     Ok(buf) => uptime::update(ip, buf),
-                    Err(err) => println!("Failed to read uptime: {:?}", err),
+                    Err(err) => error!("Failed to read uptime: {:?}", err),
                 }
                 thread::sleep(one_sec);
                 let &(ref lock, _) = &*reload_lock;
                 let time_to_die = lock.lock();
                 if *time_to_die {
-                    println!("Uptime reader for {} exiting", ip);
+                    info!("Uptime reader for {} exiting", ip);
                     break;
                 }
             });
@@ -305,7 +304,7 @@ fn run_uptime_readers(reload_lock: Arc<(Mutex<bool>, Condvar)>, uptime_readers: 
     let mut time_to_die = lock.lock();
     *time_to_die = false;
     cv.notify_all();
-    println!("All uptime readers dead");
+    info!("All uptime readers dead");
 }
 
 fn handle_signals(path: PathBuf, reload_lock: Arc<(Mutex<bool>, Condvar)>) {
@@ -314,7 +313,7 @@ fn handle_signals(path: PathBuf, reload_lock: Arc<(Mutex<bool>, Condvar)>) {
         ::util::set_thread_name("syncookied/sig");
         match signal.recv().unwrap() {
             Signal::HUP => {
-                println!("SIGHUP received, reloading configuration");
+                info!("SIGHUP received, reloading configuration");
                 match config::configure(&path) {
                     Ok(data) => {
                         let uptime_readers = data.iter().map(|&(ip, ref addr)|
@@ -329,20 +328,20 @@ fn handle_signals(path: PathBuf, reload_lock: Arc<(Mutex<bool>, Condvar)>) {
                                 cv.wait(&mut time_to_die); // unlocks mutex
                             }
                         }
-                        println!("Old readers are dead, all hail to new readers");
+                        info!("Old readers are dead, all hail to new readers");
                         let reload_lock = reload_lock.clone();
                         thread::spawn(move || run_uptime_readers(reload_lock.clone(), uptime_readers));
                     },
-                    Err(e) => println!("Error parsing config file {}: {:?}", path.display(), e),
+                    Err(e) => error!("Error parsing config file {}: {:?}", path.display(), e),
                 }
             },
             Signal::INT => {
                 use std::process;
-                println!("SIGINT received, exiting");
+                info!("SIGINT received, exiting");
                 process::exit(0);
             },
             _ => {
-                println!("Unhandled signal {:?}, ignoring", signal);
+                error!("Unhandled signal {:?}, ignoring", signal);
             }
         }
     });
@@ -369,7 +368,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
         let tx_nm = tx_nm.lock();
         tx_nm.get_tx_rings_count()
     };
-    println!("{} Rx rings @ {}, {} Tx rings @ {} Queue: {}", rx_count, rx_iface, tx_count, tx_iface, qlen);
+    info!("{} Rx rings @ {}, {} Tx rings @ {} Queue: {}", rx_count, rx_iface, tx_count, tx_iface, qlen);
     if tx_count < rx_count {
         panic!("We need at least as much Tx rings as Rx rings")
     }
@@ -398,7 +397,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
                 let rx_nm = rx_nm.clone();
 
                 scope.spawn(move || {
-                    println!("Starting RX thread for ring {} at {}", ring, rx_iface);
+                    info!("Starting RX thread for ring {} at {}", ring, rx_iface);
                     let mut ring_nm = {
                         let nm = rx_nm.lock();
                         nm.clone_ring(ring, Direction::Input).unwrap()
@@ -414,7 +413,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
                     let rx_nm = rx_nm.clone();
 
                     scope.spawn(move || {
-                    println!("Starting ARP thread for ring {} at {}", ring, rx_iface);
+                    info!("Starting ARP thread for ring {} at {}", ring, rx_iface);
                     let mut ring_nm = {
                         let nm = rx_nm.lock().unwrap();
                         nm.clone_ring(ring, Direction::Output).unwrap()
@@ -431,7 +430,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
                 let f_tx_nm = rx_nm.clone();
                 let pair = pair.clone();
                 scope.spawn(move || {
-                    println!("Starting TX thread for ring {} at {}", ring, rx_iface);
+                    info!("Starting TX thread for ring {} at {}", ring, rx_iface);
                     let mut ring_nm = {
                         let nm = f_tx_nm.lock();
                         nm.clone_ring(ring, Direction::Output).unwrap()
@@ -443,7 +442,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
 
             let tx_nm = tx_nm.clone();
             scope.spawn(move || {
-                println!("Starting TX thread for ring {} at {}", ring, tx_iface);
+                info!("Starting TX thread for ring {} at {}", ring, tx_iface);
                 let mut ring_nm = {
                     let nm = tx_nm.lock();
                     nm.clone_ring(ring, Direction::Output).unwrap()
@@ -467,7 +466,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
             let ring = rx_count;
 
             scope.spawn(move || {
-                    println!("Starting Host RX thread for ring {}", ring);
+                    info!("Starting Host RX thread for ring {}", ring);
                     let mut ring_nm = {
                         let nm = nm.lock().unwrap();
                         nm.clone_ring(ring, Direction::Input).unwrap()
@@ -539,6 +538,10 @@ fn main() {
                                     .long("first-cpu")
                                     .help("First cpu to use for Rx")
                                     .takes_value(true))
+                               .arg(Arg::with_name("debug")
+                                    .long("debug")
+                                    .help("Log to stdout")
+                                    .takes_value(false))
                                .get_matches();
 
     if let Some(matches) = matches.subcommand_matches("server") {
@@ -565,16 +568,18 @@ fn main() {
                          .unwrap_or(0);
 
         let config_path = PathBuf::from(conf);
+        logging::initialize();
         match config::configure(&config_path) {
             Ok(config) => {
+                debug!("Config file {} loaded", config_path.display());
                 let uptime_readers =
                     config.iter().map(|&(ip, ref addr)|
                         (ip, Box::new(uptime::UdpReader::new(addr.to_owned())) as Box<UptimeReader>)
                     ).collect();
-                println!("interfaces: [Rx: {}/{}, Tx: {}/{}] Cores: {}", rx_iface, rx_mac, tx_iface, tx_mac, ncpus);
+                info!("interfaces: [Rx: {}/{}, Tx: {}/{}] Cores: {}", rx_iface, rx_mac, tx_iface, tx_mac, ncpus);
                 run(config_path, &rx_iface, &tx_iface, rx_mac, tx_mac, qlen, cpu, uptime_readers);
             },
-            Err(e) => println!("Error parsing config file {}: {:?}", config_path.display(), e),
+            Err(e) => error!("Error parsing config file {}: {:?}", config_path.display(), e),
         }
     }
 }
