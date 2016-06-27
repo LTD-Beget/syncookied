@@ -16,6 +16,9 @@ yaml-rust = "0.3.2"
 parking_lot = "0.2.6"
 fnv = "1.0.2"
 chan-signal = "0.1.6"
+log = "0.3.6"
+syslog = "3.1.0"
+chrono = "0.2.22"
 
 [dependencies.bpfjit]
 git = "https://github.com/polachok/bpfjit"

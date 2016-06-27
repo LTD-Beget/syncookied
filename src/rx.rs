@@ -92,8 +92,8 @@ impl<'a> Receiver<'a> {
 
     // main RX loop
     pub fn run(mut self) {
-        println!("RX loop for ring {:?}", self.ring_num);
-        println!("Rx rings: {:?}", self.netmap.get_rx_rings());
+        info!("RX loop for ring {:?}", self.ring_num);
+        info!("Rx rings: {:?}", self.netmap.get_rx_rings());
 
         util::set_thread_name(&format!("syncookied/rx{:02}", self.ring_num));
 
@@ -102,7 +102,7 @@ impl<'a> Receiver<'a> {
 
         /* wait for card to reinitialize */
         thread::sleep(Duration::new(1, self.ring_num as u32 * 100));
-        println!("[RX#{}] started", self.ring_num);
+        info!("[RX#{}] started", self.ring_num);
 
         self.update_routing_cache();
 
@@ -187,7 +187,7 @@ impl<'a> Receiver<'a> {
             }
             if before.elapsed() >= ival {
                 rate = self.stats.received/seconds;
-                println!("[RX#{}]: received: {}Pkts/s, dropped: {}Pkts/s, forwarded: {}Pkts/s, queued: {}Pkts/s, overflowed: {}Pkts/s, failed: {}Pkts/s",
+                info!("[RX#{}]: received: {}Pkts/s, dropped: {}Pkts/s, forwarded: {}Pkts/s, queued: {}Pkts/s, overflowed: {}Pkts/s, failed: {}Pkts/s",
                             self.ring_num, rate, self.stats.dropped/seconds,
                             self.stats.forwarded/seconds, self.stats.queued/seconds,
                             self.stats.overflow/seconds, self.stats.failed/seconds);

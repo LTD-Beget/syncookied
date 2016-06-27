@@ -149,7 +149,7 @@ fn handle_ipv4_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket) -> Act
                                   fwd_mac,
                                   pkt)
     } else {
-        println!("Malformed IPv4 Packet");
+        debug!("Malformed IPv4 Packet");
         Action::Drop
     }
 }
@@ -188,7 +188,7 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: MacAddr, pkt: &mut IngressPacket) -
 			let diff = hc.tcp_timestamp as u32 - val as u32;
                         if diff > 30 * hc.hz {
                             need_forward = true;
-			    println!("TOUCH port {} (val: {} ts: {} diff: {}, hz: {})", pkt.tcp_destination, hc.tcp_timestamp as u32, val as u32, diff, hc.hz);
+			    debug!("Touch port {} (val: {} ts: {} diff: {}, hz: {})", pkt.tcp_destination, hc.tcp_timestamp as u32, val as u32, diff, hc.hz);
                         }
                     },
                     None => need_forward = true,
@@ -317,7 +317,7 @@ fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) 
             secret[0].copy_from_slice(&hc.syncookie_secret[0][0..17]);
             secret[1].copy_from_slice(&hc.syncookie_secret[1][0..17]);
         });
-        let (seq_num, mss_val) = cookie::generate_cookie_init_sequence(
+        let (seq_num, _mss_val) = cookie::generate_cookie_init_sequence(
             pkt.ipv4_source, pkt.ipv4_destination,
             pkt.tcp_source, pkt.tcp_destination, pkt.tcp_sequence,
             pkt.tcp_mss, cookie_time as u32, &secret);
