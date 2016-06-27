@@ -115,12 +115,12 @@ pub fn update(ip: Ipv4Addr, buf: Vec<u8>) {
 pub fn run_server(addr: &str) {
     use std::net::UdpSocket;
 
-    println!("Trying to enable syncookies");
+    info!("Trying to enable syncookies");
     match ::util::set_syncookies(2) {
-        Ok(_) => println!("Syncookies enabled"),
-        Err(e) => println!("{}", e),
+        Ok(_) => info!("Syncookies enabled"),
+        Err(e) => error!("{}", e),
     }
-    println!("Listening on {}", addr);
+    info!("Listening on {}", addr);
     let socket = UdpSocket::bind(addr).expect("Cannot bind socket");
 
     loop {
@@ -130,10 +130,10 @@ pub fn run_server(addr: &str) {
                 Ok(buf) => {
                     match socket.send_to(&buf[..], addr) {
                         Ok(_) => {},
-                        Err(e) => println!("Error sending: {}\n", e),
+                        Err(e) => error!("Error sending: {}\n", e),
                     }
                 }
-                Err(e) => println!("Error reading /proc/tcp_secrets: {}", e),
+                Err(e) => error!("Error reading /proc/tcp_secrets: {}", e),
             }
         }
     }

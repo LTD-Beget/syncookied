@@ -10,6 +10,7 @@ const COOKIEBITS: u32 = 24;	/* Upper bits store count */
 const COOKIEMASK: u32 = ((1 << COOKIEBITS) - 1);
 const SHA_WORKSPACE_WORDS: usize = 16;
 
+#[allow(dead_code)]
 const MAX_SYNCOOKIE_AGE: u32 = 2;
 
 
@@ -75,6 +76,7 @@ pub fn generate_cookie_init_sequence(source_addr: Ipv4Addr, dest_addr: Ipv4Addr,
     (cookie, mssval)
 }
 
+#[allow(dead_code)]
 #[inline]
 fn check_tcp_syn_cookie(cookie: u32, saddr: u32, daddr: u32,
                         sport: u16, dport: u16, sseq: u32) -> u32 {
@@ -103,6 +105,8 @@ fn check_tcp_syn_cookie(cookie: u32, saddr: u32, daddr: u32,
 }
 
 /// Checks cookie, returns MSS value if valid
+/// Currently unused
+#[allow(dead_code)]
 #[inline]
 pub fn cookie_check(source_addr: Ipv4Addr, dest_addr: Ipv4Addr,
                     source_port: u16, dest_port: u16, seq: u32,

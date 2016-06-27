@@ -57,7 +57,7 @@ impl<'a> Sender<'a> {
 
     // main transfer loop
     pub fn run(mut self) {
-        println!("TX loop for ring {:?} starting. Rings: {:?}", self.ring_num, self.netmap.get_tx_rings());
+        info!("TX loop for ring {:?} starting. Rings: {:?}", self.ring_num, self.netmap.get_tx_rings());
 
         util::set_thread_name(&format!("syncookied/tx{:02}", self.ring_num));
 
@@ -66,7 +66,7 @@ impl<'a> Sender<'a> {
 
         /* wait for card to reinitialize */
         thread::sleep(Duration::new(1, self.ring_num as u32 * 100));
-        println!("[TX#{}] started", self.ring_num);
+        info!("[TX#{}] started", self.ring_num);
 
         let mut before = time::Instant::now();
         let seconds: usize = 5;
@@ -126,7 +126,7 @@ impl<'a> Sender<'a> {
             }
             if before.elapsed() >= ival {
                 rate = self.stats.sent/seconds;
-                println!("[TX#{}]: sent {}Pkts/s, failed {}Pkts/s", self.ring_num, rate, self.stats.failed/seconds);
+                info!("[TX#{}]: sent {}Pkts/s, failed {}Pkts/s", self.ring_num, rate, self.stats.failed/seconds);
                 self.stats.clear();
                 before = time::Instant::now();
                 self.update_routing_cache();
@@ -144,7 +144,7 @@ impl<'a> Sender<'a> {
         match pkt {
             &OutgoingPacket::Ingress(ref pkt) => {
                 if let Some(len) = packet::handle_reply(&pkt, source_mac, buf) {
-                    //println!("[TX#{}] SENDING PACKET\n", ring_num);
+                    //debug!("[TX#{}] SENDING PACKET\n", ring_num);
                     slot.set_flags(0); //netmap::NS_BUF_CHANGED as u16 /* | netmap::NS_REPORT as u16 */);
                     slot.set_len(len as u16);
                     stats.sent += 1;
@@ -174,7 +174,7 @@ impl<'a> Sender<'a> {
     /*
                 {
                     packet::dump_input(&buf);
-                    println!("[TX#{}]: received slot: {:x} buf: {:x}, buf_idx: {} (was buf_idx: {})",
+                    debug!("[TX#{}]: received slot: {:x} buf: {:x}, buf_idx: {} (was buf_idx: {})",
                         ring_num, slot_ptr, buf_ptr, slot.get_buf_idx(), tx_idx);
                 }
     */
