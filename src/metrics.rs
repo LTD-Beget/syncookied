@@ -32,8 +32,9 @@ pub struct Metric<'a> {
 }
 
 impl<'a> Metric<'a> {
-    pub fn new(name: &'a str) -> Metric<'a> {
+    pub fn new(name: &'a str, val: i64) -> Metric<'a> {
         let mut m = Measurement::new(name);
+        m.add_field("value", Value::Integer(val));
         Metric { inner: m }
     }
 

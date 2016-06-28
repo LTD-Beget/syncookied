@@ -17,8 +17,8 @@ use ::metrics;
 
 #[derive(Debug,Default)]
 struct TxStats {
-    pub sent: usize,
-    pub failed: usize,
+    pub sent: u32,
+    pub failed: u32,
 }
 
 impl TxStats {
@@ -28,6 +28,14 @@ impl TxStats {
 
     pub fn clear(&mut self) {
         *self = Default::default();
+    }
+
+    pub fn make_metrics<'a>(&self, seconds: u32) -> [metrics::Metric<'a>;2] {
+        use metrics::Metric;
+        [
+            Metric::new("tx_pps", (self.sent / seconds) as i64),
+            Metric::new("tx_failed", (self.failed / seconds) as i64),
+        ]
     }
 }
 
@@ -61,10 +69,9 @@ impl<'a> Sender<'a> {
         }
     }
 
-    fn send_metrics(client: &metrics::Client, stats: &TxStats) {
-        let mut metric = metrics::Metric::new("tx_pps");
-        metric.set_value(stats.sent as i64);
-        &(*client).send(&[metric]);
+    fn send_metrics(client: &metrics::Client, stats: &TxStats, seconds: u32) {
+        let metrics = stats.make_metrics(seconds);
+        &(*client).send(&metrics);
     }
 
     // main transfer loop
@@ -82,9 +89,9 @@ impl<'a> Sender<'a> {
         info!("[TX#{}] started", self.ring_num);
 
         let mut before = time::Instant::now();
-        let seconds: usize = 5;
+        let seconds: u32 = 5;
         let ival = time::Duration::new(seconds as u64, 0);
-        let mut rate: usize = 0;
+        let mut rate: u32 = 0;
 
         self.update_routing_cache();
 
@@ -138,7 +145,7 @@ impl<'a> Sender<'a> {
                 }
             }
             if before.elapsed() >= ival {
-                Self::send_metrics(&metrics_client, &self.stats);
+                Self::send_metrics(&metrics_client, &self.stats, seconds);
                 rate = self.stats.sent/seconds;
                 info!("[TX#{}]: sent {}Pkts/s, failed {}Pkts/s", self.ring_num, rate, self.stats.failed/seconds);
                 self.stats.clear();

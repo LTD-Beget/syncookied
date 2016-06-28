@@ -17,12 +17,12 @@ use ::metrics;
 
 #[derive(Debug,Default)]
 struct RxStats {
-    pub received: usize,
-    pub dropped: usize,
-    pub forwarded: usize,
-    pub queued: usize,
-    pub overflow: usize,
-    pub failed: usize,
+    pub received: u32,
+    pub dropped: u32,
+    pub forwarded: u32,
+    pub queued: u32,
+    pub overflow: u32,
+    pub failed: u32,
 }
 
 impl RxStats {
@@ -32,6 +32,18 @@ impl RxStats {
 
     pub fn clear(&mut self) {
         *self = Default::default();
+    }
+
+    pub fn make_metrics<'a>(&self, seconds: u32) -> [metrics::Metric<'a>;6] {
+        use metrics::Metric;
+        [
+            Metric::new("rx_pps", (self.received / seconds) as i64),
+            Metric::new("rx_drop", (self.dropped / seconds) as i64),
+            Metric::new("rx_forwarded", (self.forwarded / seconds) as i64),
+            Metric::new("rx_queued", (self.queued / seconds) as i64),
+            Metric::new("rx_overflow", (self.overflow / seconds) as i64),
+            Metric::new("rx_failed", (self.failed / seconds) as i64),
+        ]
     }
 }
 
@@ -94,10 +106,9 @@ impl<'a> Receiver<'a> {
         ::RoutingTable::sync_tables();
     }
 
-    fn send_metrics(client: &metrics::Client, stats: &RxStats) {
-        let mut metric = metrics::Metric::new("rx_pps");
-        metric.set_value(stats.received as i64);
-        &(*client).send(&[metric]);
+    fn send_metrics(client: &metrics::Client, stats: &RxStats, seconds: u32) {
+        let metrics = stats.make_metrics(seconds);
+        &(*client).send(&metrics);
     }
 
     // main RX loop
@@ -118,8 +129,8 @@ impl<'a> Receiver<'a> {
         self.update_routing_cache();
 
         let mut before = time::Instant::now();
-        let seconds: usize = 2;
-        let mut rate: usize = 0;
+        let seconds: u32 = 2;
+        let mut rate: u32 = 0;
         let ival = time::Duration::new(seconds as u64, 0);
 
         loop {
@@ -197,7 +208,7 @@ impl<'a> Receiver<'a> {
                 }
             }
             if before.elapsed() >= ival {
-                Self::send_metrics(&metrics_client, &self.stats);
+                Self::send_metrics(&metrics_client, &self.stats, seconds);
                 rate = self.stats.received/seconds;
                 info!("[RX#{}]: received: {}Pkts/s, dropped: {}Pkts/s, forwarded: {}Pkts/s, queued: {}Pkts/s, overflowed: {}Pkts/s, failed: {}Pkts/s",
                             self.ring_num, rate, self.stats.dropped/seconds,
