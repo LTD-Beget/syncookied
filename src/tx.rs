@@ -13,6 +13,7 @@ use ::pnet::util::MacAddr;
 use ::pnet::packet::ethernet::MutableEthernetPacket;
 use ::spsc;
 use ::util;
+use ::metrics;
 
 #[derive(Debug,Default)]
 struct TxStats {
@@ -38,12 +39,16 @@ pub struct Sender<'a> {
     lock: Arc<AtomicUsize>,
     source_mac: MacAddr,
     stats: TxStats,
+    metrics_addr: &'a str,
 }
 
 impl<'a> Sender<'a> {
-    pub fn new(ring_num: u16, cpu: usize, chan: spsc::Consumer<OutgoingPacket>,
-            netmap: &'a mut NetmapDescriptor, lock: Arc<AtomicUsize>,
-            source_mac: MacAddr) -> Sender<'a> {
+    pub fn new(ring_num: u16, cpu: usize,
+               chan: spsc::Consumer<OutgoingPacket>,
+               netmap: &'a mut NetmapDescriptor,
+               lock: Arc<AtomicUsize>,
+               source_mac: MacAddr,
+               metrics_addr: &'a str) -> Sender<'a> {
         Sender {
             ring_num: ring_num,
             cpu: cpu,
@@ -52,12 +57,20 @@ impl<'a> Sender<'a> {
             lock: lock,
             source_mac: source_mac,
             stats: TxStats::empty(),
+            metrics_addr: metrics_addr,
         }
+    }
+
+    fn send_metrics(client: &metrics::Client, stats: &TxStats) {
+        let mut metric = metrics::Metric::new("tx_pps");
+        metric.set_value(stats.sent as i64);
+        &(*client).send(&[metric]);
     }
 
     // main transfer loop
     pub fn run(mut self) {
         info!("TX loop for ring {:?} starting. Rings: {:?}", self.ring_num, self.netmap.get_tx_rings());
+        let metrics_client = metrics::Client::new(self.metrics_addr);
 
         util::set_thread_name(&format!("syncookied/tx{:02}", self.ring_num));
 
@@ -125,6 +138,7 @@ impl<'a> Sender<'a> {
                 }
             }
             if before.elapsed() >= ival {
+                Self::send_metrics(&metrics_client, &self.stats);
                 rate = self.stats.sent/seconds;
                 info!("[TX#{}]: sent {}Pkts/s, failed {}Pkts/s", self.ring_num, rate, self.stats.failed/seconds);
                 self.stats.clear();
