@@ -551,6 +551,7 @@ fn main() {
         let addr = matches.value_of("addr").unwrap_or("127.0.0.1:1488"); 
         uptime::run_server(addr);
     } else {
+        println!("Hostname: {}", util::get_host_name().unwrap());
         let conf = matches.value_of("config").unwrap_or("hosts.yml");
         let rx_iface = matches.value_of("in").expect("Expected valid input interface");
         let tx_iface = matches.value_of("out").unwrap_or(rx_iface);

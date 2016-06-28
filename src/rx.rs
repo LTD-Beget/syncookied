@@ -34,17 +34,6 @@ impl RxStats {
         *self = Default::default();
     }
 
-    pub fn make_metrics<'a>(&self, seconds: u32) -> [metrics::Metric<'a>;6] {
-        use metrics::Metric;
-        [
-            Metric::new("rx_pps", (self.received / seconds) as i64),
-            Metric::new("rx_drop", (self.dropped / seconds) as i64),
-            Metric::new("rx_forwarded", (self.forwarded / seconds) as i64),
-            Metric::new("rx_queued", (self.queued / seconds) as i64),
-            Metric::new("rx_overflow", (self.overflow / seconds) as i64),
-            Metric::new("rx_failed", (self.failed / seconds) as i64),
-        ]
-    }
 }
 
 pub struct Receiver<'a> {
@@ -106,17 +95,38 @@ impl<'a> Receiver<'a> {
         ::RoutingTable::sync_tables();
     }
 
-    fn send_metrics(client: &metrics::Client, stats: &RxStats, seconds: u32) {
-        let metrics = stats.make_metrics(seconds);
-        &(*client).send(&metrics);
+    fn make_metrics<'t>(tags: &'t [(&'t str, &'t str)]) -> [metrics::Metric<'t>;6] {
+        use metrics::Metric;
+        [
+            Metric::new_with_tags("rx_pps", tags),
+            Metric::new_with_tags("rx_drop", tags),
+            Metric::new_with_tags("rx_forwarded", tags),
+            Metric::new_with_tags("rx_queued", tags),
+            Metric::new_with_tags("rx_overflow", tags),
+            Metric::new_with_tags("rx_failed", tags),
+        ]
+    }
+
+    fn update_metrics<'t>(stats: &'t RxStats, metrics: &mut [metrics::Metric<'a>;6], seconds: u32) {
+        metrics[0].set_value((stats.received / seconds) as i64);
+        metrics[1].set_value((stats.dropped / seconds) as i64);
+        metrics[2].set_value((stats.forwarded / seconds) as i64);
+        metrics[3].set_value((stats.queued / seconds) as i64);
+        metrics[4].set_value((stats.overflow / seconds) as i64);
+        metrics[5].set_value((stats.failed / seconds) as i64);
     }
 
     // main RX loop
     pub fn run(mut self) {
+        let metrics_client = metrics::Client::new(self.metrics_addr);
+        let hostname = util::get_host_name().unwrap();
+        let queue = format!("{}", self.ring_num);
+        let ifname = self.netmap.get_ifname();
+        let tags = [("queue", queue.as_str()), ("host", hostname.as_str()), ("iface", ifname.as_str())];
+        let mut metrics = Self::make_metrics(&tags[..]);
+
         info!("RX loop for ring {:?}", self.ring_num);
         info!("Rx rings: {:?}", self.netmap.get_rx_rings());
-        let metrics_client = metrics::Client::new(self.metrics_addr);
-
         util::set_thread_name(&format!("syncookied/rx{:02}", self.ring_num));
 
         scheduler::set_self_affinity(CpuSet::single(self.cpu)).expect("setting affinity failed");
@@ -208,7 +218,11 @@ impl<'a> Receiver<'a> {
                 }
             }
             if before.elapsed() >= ival {
-                Self::send_metrics(&metrics_client, &self.stats, seconds);
+                {
+                    let stats = &self.stats;
+                    Self::update_metrics(stats, &mut metrics, seconds);
+                    metrics_client.send(&metrics);
+                }
                 rate = self.stats.received/seconds;
                 info!("[RX#{}]: received: {}Pkts/s, dropped: {}Pkts/s, forwarded: {}Pkts/s, queued: {}Pkts/s, overflowed: {}Pkts/s, failed: {}Pkts/s",
                             self.ring_num, rate, self.stats.dropped/seconds,

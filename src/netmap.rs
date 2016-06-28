@@ -376,6 +376,17 @@ impl NetmapDescriptor {
         })
     }
 
+    pub fn get_ifname(&self) -> String {
+        const IFNAMSIZ: usize = libc::IF_NAMESIZE;
+        unsafe {
+            let nifp = (*self.raw).nifp;
+            let mut buf = vec![0;IFNAMSIZ + 1];
+            libc::strncpy(buf.as_mut_ptr() as *mut libc::c_char, (*nifp).ni_name.as_ptr(), IFNAMSIZ);
+            let cstr = CString::from_vec_unchecked(buf);
+            cstr.into_string().unwrap()
+        }
+    }
+
     pub fn rx_iter<'i, 'd: 'i>(&'d mut self) -> RxRingIter<'i> {
         let (first, last) = self.get_rx_rings();
 

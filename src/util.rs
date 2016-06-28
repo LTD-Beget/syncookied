@@ -53,3 +53,16 @@ pub fn get_iface_mac(iface: &str) -> Result<String, io::Error> {
         Err(e) => Err(e),
     }
 }
+
+pub fn get_host_name() -> Option<String> {
+    use std::ffi::CString;
+    const HOST_NAME_MAX: usize = 256; /* XXX: add into libc */
+    let mut buf = vec!(0; HOST_NAME_MAX + 1);
+    let rv = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, HOST_NAME_MAX + 1) };
+    if rv != 0 {
+        None
+    } else {
+        let cstr = unsafe { CString::from_vec_unchecked(buf) };
+        Some(cstr.into_string().unwrap())
+    }
+}
