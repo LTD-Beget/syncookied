@@ -572,7 +572,8 @@ fn main() {
                          .unwrap_or(0);
 
         let config_path = PathBuf::from(conf);
-        logging::initialize();
+        let debug = matches.is_present("debug");
+        logging::initialize(debug);
         match config::configure(&config_path) {
             Ok(config) => {
                 debug!("Config file {} loaded", config_path.display());
