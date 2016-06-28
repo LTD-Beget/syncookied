@@ -17,10 +17,9 @@ impl log::Log for SimpleLogger {
     }
 }
 
-pub fn initialize() {
+pub fn initialize(debug: bool) {
     log::set_logger(|max_log_level| {
-        max_log_level.set(log::LogLevelFilter::Debug);
+        max_log_level.set(if debug { log::LogLevelFilter::Debug } else { log::LogLevelFilter::Info });
         Box::new(SimpleLogger)
     }).unwrap();
-
 }

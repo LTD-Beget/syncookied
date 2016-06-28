@@ -13,15 +13,16 @@ use ::util;
 use ::libc;
 use ::spsc;
 use ::packet::Action;
+use ::metrics;
 
 #[derive(Debug,Default)]
 struct RxStats {
-    pub received: usize,
-    pub dropped: usize,
-    pub forwarded: usize,
-    pub queued: usize,
-    pub overflow: usize,
-    pub failed: usize,
+    pub received: u32,
+    pub dropped: u32,
+    pub forwarded: u32,
+    pub queued: u32,
+    pub overflow: u32,
+    pub failed: u32,
 }
 
 impl RxStats {
@@ -32,6 +33,7 @@ impl RxStats {
     pub fn clear(&mut self) {
         *self = Default::default();
     }
+
 }
 
 pub struct Receiver<'a> {
@@ -43,6 +45,7 @@ pub struct Receiver<'a> {
     lock: Arc<AtomicUsize>,
     mac: MacAddr,
     ring_num: u16,
+    metrics_addr: Option<&'a str>,
 }
 
 #[inline(always)]
@@ -73,7 +76,8 @@ impl<'a> Receiver<'a> {
                chan_reply: spsc::Producer<OutgoingPacket>,
                netmap: &'a mut NetmapDescriptor,
                lock: Arc<AtomicUsize>,
-               mac: MacAddr) -> Self {
+               mac: MacAddr,
+               metrics_addr: Option<&'a str>) -> Self {
         Receiver {
             ring_num: ring_num,
             cpu: cpu,
@@ -83,6 +87,7 @@ impl<'a> Receiver<'a> {
             lock: lock,
             stats: RxStats::empty(),
             mac: mac,
+            metrics_addr: metrics_addr,
         }
     }
 
@@ -90,11 +95,38 @@ impl<'a> Receiver<'a> {
         ::RoutingTable::sync_tables();
     }
 
+    fn make_metrics<'t>(tags: &'t [(&'t str, &'t str)]) -> [metrics::Metric<'t>;6] {
+        use metrics::Metric;
+        [
+            Metric::new_with_tags("rx_pps", tags),
+            Metric::new_with_tags("rx_drop", tags),
+            Metric::new_with_tags("rx_forwarded", tags),
+            Metric::new_with_tags("rx_queued", tags),
+            Metric::new_with_tags("rx_overflow", tags),
+            Metric::new_with_tags("rx_failed", tags),
+        ]
+    }
+
+    fn update_metrics<'t>(stats: &'t RxStats, metrics: &mut [metrics::Metric<'a>;6], seconds: u32) {
+        metrics[0].set_value((stats.received / seconds) as i64);
+        metrics[1].set_value((stats.dropped / seconds) as i64);
+        metrics[2].set_value((stats.forwarded / seconds) as i64);
+        metrics[3].set_value((stats.queued / seconds) as i64);
+        metrics[4].set_value((stats.overflow / seconds) as i64);
+        metrics[5].set_value((stats.failed / seconds) as i64);
+    }
+
     // main RX loop
     pub fn run(mut self) {
+        let metrics_client = self.metrics_addr.map(metrics::Client::new);
+        let hostname = util::get_host_name().unwrap();
+        let queue = format!("{}", self.ring_num);
+        let ifname = self.netmap.get_ifname();
+        let tags = [("queue", queue.as_str()), ("host", hostname.as_str()), ("iface", ifname.as_str())];
+        let mut metrics = Self::make_metrics(&tags[..]);
+
         info!("RX loop for ring {:?}", self.ring_num);
         info!("Rx rings: {:?}", self.netmap.get_rx_rings());
-
         util::set_thread_name(&format!("syncookied/rx{:02}", self.ring_num));
 
         scheduler::set_self_affinity(CpuSet::single(self.cpu)).expect("setting affinity failed");
@@ -107,8 +139,8 @@ impl<'a> Receiver<'a> {
         self.update_routing_cache();
 
         let mut before = time::Instant::now();
-        let seconds: usize = 2;
-        let mut rate: usize = 0;
+        let seconds: u32 = 2;
+        let mut rate: u32 = 0;
         let ival = time::Duration::new(seconds as u64, 0);
 
         loop {
@@ -186,8 +218,13 @@ impl<'a> Receiver<'a> {
                 }
             }
             if before.elapsed() >= ival {
+                if let Some(ref metrics_client) = metrics_client {
+                    let stats = &self.stats;
+                    Self::update_metrics(stats, &mut metrics, seconds);
+                    metrics_client.send(&metrics);
+                }
                 rate = self.stats.received/seconds;
-                info!("[RX#{}]: received: {}Pkts/s, dropped: {}Pkts/s, forwarded: {}Pkts/s, queued: {}Pkts/s, overflowed: {}Pkts/s, failed: {}Pkts/s",
+                debug!("[RX#{}]: received: {}Pkts/s, dropped: {}Pkts/s, forwarded: {}Pkts/s, queued: {}Pkts/s, overflowed: {}Pkts/s, failed: {}Pkts/s",
                             self.ring_num, rate, self.stats.dropped/seconds,
                             self.stats.forwarded/seconds, self.stats.queued/seconds,
                             self.stats.overflow/seconds, self.stats.failed/seconds);

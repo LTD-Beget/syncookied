@@ -20,6 +20,13 @@ log = "0.3.6"
 syslog = "3.1.0"
 chrono = "0.2.22"
 
+[dependencies.influent]
+git = "https://github.com/polachok/influent.rs"
+branch = "udp+"
+rev = "a2173c040baf099ec88ac47d8b2604868346cc23"
+default-features = false
+features = []
+
 [dependencies.bpfjit]
 git = "https://github.com/polachok/bpfjit"
 rev = "2debf393d2cb1d7e0a8f9c2d3bb3cedcc17f2c76"

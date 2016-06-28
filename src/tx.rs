@@ -13,11 +13,12 @@ use ::pnet::util::MacAddr;
 use ::pnet::packet::ethernet::MutableEthernetPacket;
 use ::spsc;
 use ::util;
+use ::metrics;
 
 #[derive(Debug,Default)]
 struct TxStats {
-    pub sent: usize,
-    pub failed: usize,
+    pub sent: u32,
+    pub failed: u32,
 }
 
 impl TxStats {
@@ -38,12 +39,16 @@ pub struct Sender<'a> {
     lock: Arc<AtomicUsize>,
     source_mac: MacAddr,
     stats: TxStats,
+    metrics_addr: Option<&'a str>,
 }
 
 impl<'a> Sender<'a> {
-    pub fn new(ring_num: u16, cpu: usize, chan: spsc::Consumer<OutgoingPacket>,
-            netmap: &'a mut NetmapDescriptor, lock: Arc<AtomicUsize>,
-            source_mac: MacAddr) -> Sender<'a> {
+    pub fn new(ring_num: u16, cpu: usize,
+               chan: spsc::Consumer<OutgoingPacket>,
+               netmap: &'a mut NetmapDescriptor,
+               lock: Arc<AtomicUsize>,
+               source_mac: MacAddr,
+               metrics_addr: Option<&'a str>) -> Sender<'a> {
         Sender {
             ring_num: ring_num,
             cpu: cpu,
@@ -52,12 +57,32 @@ impl<'a> Sender<'a> {
             lock: lock,
             source_mac: source_mac,
             stats: TxStats::empty(),
+            metrics_addr: metrics_addr,
         }
+    }
+
+    fn make_metrics<'t>(tags: &'t [(&'t str, &'t str)]) -> [metrics::Metric<'t>;2] {
+        use metrics::Metric;
+        [
+            Metric::new_with_tags("tx_pps", tags),
+            Metric::new_with_tags("tx_failed", tags),
+        ]
+    }
+
+    fn update_metrics<'t>(stats: &'t TxStats, metrics: &mut [metrics::Metric<'a>;2], seconds: u32) {
+        metrics[0].set_value((stats.sent / seconds) as i64);
+        metrics[1].set_value((stats.failed / seconds) as i64);
     }
 
     // main transfer loop
     pub fn run(mut self) {
         info!("TX loop for ring {:?} starting. Rings: {:?}", self.ring_num, self.netmap.get_tx_rings());
+        let metrics_client = self.metrics_addr.map(metrics::Client::new);
+        let hostname = util::get_host_name().unwrap();
+        let queue = format!("{}", self.ring_num);
+        let ifname = self.netmap.get_ifname();
+        let tags = [("queue", queue.as_str()), ("host", hostname.as_str()), ("iface", ifname.as_str())];
+        let mut metrics = Self::make_metrics(&tags[..]);
 
         util::set_thread_name(&format!("syncookied/tx{:02}", self.ring_num));
 
@@ -69,9 +94,9 @@ impl<'a> Sender<'a> {
         info!("[TX#{}] started", self.ring_num);
 
         let mut before = time::Instant::now();
-        let seconds: usize = 5;
+        let seconds: u32 = 5;
         let ival = time::Duration::new(seconds as u64, 0);
-        let mut rate: usize = 0;
+        let mut rate: u32 = 0;
 
         self.update_routing_cache();
 
@@ -125,8 +150,13 @@ impl<'a> Sender<'a> {
                 }
             }
             if before.elapsed() >= ival {
+                if let Some(ref metrics_client) = metrics_client {
+                    let stats = &self.stats;
+                    Self::update_metrics(stats, &mut metrics, seconds);
+                    metrics_client.send(&metrics);
+                }
                 rate = self.stats.sent/seconds;
-                info!("[TX#{}]: sent {}Pkts/s, failed {}Pkts/s", self.ring_num, rate, self.stats.failed/seconds);
+                debug!("[TX#{}]: sent {}Pkts/s, failed {}Pkts/s", self.ring_num, rate, self.stats.failed/seconds);
                 self.stats.clear();
                 before = time::Instant::now();
                 self.update_routing_cache();
