@@ -35,6 +35,7 @@ pub struct Sender<'a> {
     ring_num: u16,
     cpu: usize,
     chan: spsc::Consumer<OutgoingPacket>,
+    fwd_chan: spsc::Consumer<OutgoingPacket>,
     netmap: &'a mut NetmapDescriptor,
     lock: Arc<AtomicUsize>,
     source_mac: MacAddr,
@@ -45,6 +46,7 @@ pub struct Sender<'a> {
 impl<'a> Sender<'a> {
     pub fn new(ring_num: u16, cpu: usize,
                chan: spsc::Consumer<OutgoingPacket>,
+               fwd_chan: spsc::Consumer<OutgoingPacket>,
                netmap: &'a mut NetmapDescriptor,
                lock: Arc<AtomicUsize>,
                source_mac: MacAddr,
@@ -53,6 +55,7 @@ impl<'a> Sender<'a> {
             ring_num: ring_num,
             cpu: cpu,
             chan: chan,
+            fwd_chan: fwd_chan,
             netmap: netmap,
             lock: lock,
             source_mac: source_mac,
@@ -112,14 +115,25 @@ impl<'a> Sender<'a> {
                         let lock = &mut self.lock;
                         let ring_num = self.ring_num;
                         let source_mac = self.source_mac;
-                        match self.chan.try_pop_with(|pkt| {
+                        match self.fwd_chan.try_pop_with(|pkt| {
                             if rate < 1000 {
                                 ::RoutingTable::sync_tables();
                             }
                             Self::send(pkt, slot, buf, stats, lock,
                                        ring_num, source_mac);
                         }) {
-                            None => thread::sleep(Duration::new(0, 100)),
+                            None => {
+                                match self.chan.try_pop_with(|pkt| {
+                                    if rate < 1000 {
+                                        ::RoutingTable::sync_tables();
+                                    }
+                                    Self::send(pkt, slot, buf, stats, lock,
+                                               ring_num, source_mac);
+                                }) {
+                                    None => thread::sleep(Duration::new(0, 100)),
+                                    Some(_) => { },
+                                }
+                            },
                             Some(_) => { },
                         }
                     }
@@ -129,11 +143,22 @@ impl<'a> Sender<'a> {
                         let lock = &mut self.lock;
                         let ring_num = self.ring_num;
                         let source_mac = self.source_mac;
-                        match self.chan.try_pop_with(|pkt| {
+                        match self.fwd_chan.try_pop_with(|pkt| {
                                 Self::send(pkt, slot, buf, stats, lock,
                                            ring_num, source_mac);
                         }) {
-                            None => thread::sleep(Duration::new(0, 200)),
+                            None => {
+                                match self.chan.try_pop_with(|pkt| {
+                                    if rate < 1000 {
+                                        ::RoutingTable::sync_tables();
+                                    }
+                                    Self::send(pkt, slot, buf, stats, lock,
+                                               ring_num, source_mac);
+                                }) {
+                                    None => thread::sleep(Duration::new(0, 100)),
+                                    Some(_) => { },
+                                };
+                            },
                             Some(_) => { },
                         }
 /*
