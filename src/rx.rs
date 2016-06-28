@@ -224,7 +224,7 @@ impl<'a> Receiver<'a> {
                     metrics_client.send(&metrics);
                 }
                 rate = self.stats.received/seconds;
-                info!("[RX#{}]: received: {}Pkts/s, dropped: {}Pkts/s, forwarded: {}Pkts/s, queued: {}Pkts/s, overflowed: {}Pkts/s, failed: {}Pkts/s",
+                debug!("[RX#{}]: received: {}Pkts/s, dropped: {}Pkts/s, forwarded: {}Pkts/s, queued: {}Pkts/s, overflowed: {}Pkts/s, failed: {}Pkts/s",
                             self.ring_num, rate, self.stats.dropped/seconds,
                             self.stats.forwarded/seconds, self.stats.queued/seconds,
                             self.stats.overflow/seconds, self.stats.failed/seconds);

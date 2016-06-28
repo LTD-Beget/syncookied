@@ -29,14 +29,6 @@ impl TxStats {
     pub fn clear(&mut self) {
         *self = Default::default();
     }
-
-    pub fn make_metrics<'a>(&self, seconds: u32) -> [metrics::Metric<'a>;2] {
-        use metrics::Metric;
-        [
-            Metric::new("tx_pps", (self.sent / seconds) as i64),
-            Metric::new("tx_failed", (self.failed / seconds) as i64),
-        ]
-    }
 }
 
 pub struct Sender<'a> {
@@ -69,15 +61,28 @@ impl<'a> Sender<'a> {
         }
     }
 
-    fn send_metrics(client: &metrics::Client, stats: &TxStats, seconds: u32) {
-        let metrics = stats.make_metrics(seconds);
-        &(*client).send(&metrics);
+    fn make_metrics<'t>(tags: &'t [(&'t str, &'t str)]) -> [metrics::Metric<'t>;2] {
+        use metrics::Metric;
+        [
+            Metric::new_with_tags("tx_pps", tags),
+            Metric::new_with_tags("tx_failed", tags),
+        ]
+    }
+
+    fn update_metrics<'t>(stats: &'t TxStats, metrics: &mut [metrics::Metric<'a>;2], seconds: u32) {
+        metrics[0].set_value((stats.sent / seconds) as i64);
+        metrics[1].set_value((stats.failed / seconds) as i64);
     }
 
     // main transfer loop
     pub fn run(mut self) {
         info!("TX loop for ring {:?} starting. Rings: {:?}", self.ring_num, self.netmap.get_tx_rings());
         let metrics_client = metrics::Client::new(self.metrics_addr);
+        let hostname = util::get_host_name().unwrap();
+        let queue = format!("{}", self.ring_num);
+        let ifname = self.netmap.get_ifname();
+        let tags = [("queue", queue.as_str()), ("host", hostname.as_str()), ("iface", ifname.as_str())];
+        let mut metrics = Self::make_metrics(&tags[..]);
 
         util::set_thread_name(&format!("syncookied/tx{:02}", self.ring_num));
 
@@ -145,9 +150,13 @@ impl<'a> Sender<'a> {
                 }
             }
             if before.elapsed() >= ival {
-                Self::send_metrics(&metrics_client, &self.stats, seconds);
+                {
+                    let stats = &self.stats;
+                    Self::update_metrics(stats, &mut metrics, seconds);
+                    metrics_client.send(&metrics);
+                }
                 rate = self.stats.sent/seconds;
-                info!("[TX#{}]: sent {}Pkts/s, failed {}Pkts/s", self.ring_num, rate, self.stats.failed/seconds);
+                debug!("[TX#{}]: sent {}Pkts/s, failed {}Pkts/s", self.ring_num, rate, self.stats.failed/seconds);
                 self.stats.clear();
                 before = time::Instant::now();
                 self.update_routing_cache();
