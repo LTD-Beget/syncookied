@@ -45,7 +45,7 @@ pub struct Receiver<'a> {
     lock: Arc<AtomicUsize>,
     mac: MacAddr,
     ring_num: u16,
-    metrics_addr: &'a str,
+    metrics_addr: Option<&'a str>,
 }
 
 #[inline(always)]
@@ -77,7 +77,7 @@ impl<'a> Receiver<'a> {
                netmap: &'a mut NetmapDescriptor,
                lock: Arc<AtomicUsize>,
                mac: MacAddr,
-               metrics_addr: &'a str) -> Self {
+               metrics_addr: Option<&'a str>) -> Self {
         Receiver {
             ring_num: ring_num,
             cpu: cpu,
@@ -118,7 +118,7 @@ impl<'a> Receiver<'a> {
 
     // main RX loop
     pub fn run(mut self) {
-        let metrics_client = metrics::Client::new(self.metrics_addr);
+        let metrics_client = self.metrics_addr.map(metrics::Client::new);
         let hostname = util::get_host_name().unwrap();
         let queue = format!("{}", self.ring_num);
         let ifname = self.netmap.get_ifname();
@@ -218,7 +218,7 @@ impl<'a> Receiver<'a> {
                 }
             }
             if before.elapsed() >= ival {
-                {
+                if let Some(ref metrics_client) = metrics_client {
                     let stats = &self.stats;
                     Self::update_metrics(stats, &mut metrics, seconds);
                     metrics_client.send(&metrics);

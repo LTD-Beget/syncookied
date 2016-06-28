@@ -353,8 +353,8 @@ fn handle_signals(path: PathBuf, reload_lock: Arc<(Mutex<bool>, Condvar)>) {
 fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
        rx_mac: MacAddr, tx_mac: MacAddr,
        qlen: u32, first_cpu: usize,
-       uptime_readers: Vec<(Ipv4Addr, Box<UptimeReader>)>) {
-    let metrics_addr = "127.0.0.1:8089";
+       uptime_readers: Vec<(Ipv4Addr, Box<UptimeReader>)>,
+       metrics_server: Option<&str>) {
     let rx_nm = Arc::new(Mutex::new(NetmapDescriptor::new(rx_iface).unwrap()));
     let multi_if = rx_iface != tx_iface;
     let tx_nm = if multi_if {
@@ -406,7 +406,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
                         nm.clone_ring(ring, Direction::Input).unwrap()
                     };
                     let cpu = first_cpu + ring as usize;
-                    rx::Receiver::new(ring, cpu, f_tx, tx, &mut ring_nm, rx_pair, rx_mac.clone(), metrics_addr).run();
+                    rx::Receiver::new(ring, cpu, f_tx, tx, &mut ring_nm, rx_pair, rx_mac.clone(), metrics_server).run();
                 });
             }
 
@@ -439,7 +439,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
                         nm.clone_ring(ring, Direction::Output).unwrap()
                     };
                     let cpu = first_cpu + ring as usize; /* we assume queues/rings are bound to cpus */
-                    tx::Sender::new(ring, cpu, f_rx.unwrap(), &mut ring_nm, pair, rx_mac.clone(), metrics_addr).run();
+                    tx::Sender::new(ring, cpu, f_rx.unwrap(), &mut ring_nm, pair, rx_mac.clone(), metrics_server).run();
                 });
             }
 
@@ -459,7 +459,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
                 } else {
                     0
                 } + first_cpu + ring as usize;
-                tx::Sender::new(ring, cpu, rx, &mut ring_nm, pair, tx_mac, metrics_addr).run();
+                tx::Sender::new(ring, cpu, rx, &mut ring_nm, pair, tx_mac, metrics_server).run();
             });
         }
 
@@ -545,6 +545,11 @@ fn main() {
                                     .long("debug")
                                     .help("Log to stdout")
                                     .takes_value(false))
+                               .arg(Arg::with_name("metrics-server")
+                                    .long("metrics-server")
+                                    .required(false)
+                                    .help("host:port of influxdb udp listener")
+                                    .takes_value(true))
                                .get_matches();
 
     if let Some(matches) = matches.subcommand_matches("server") {
@@ -570,6 +575,7 @@ fn main() {
         let cpu = matches.value_of("cpu")
                          .map(|x| usize::from_str(x).expect("Expected cpu number"))
                          .unwrap_or(0);
+        let metrics_server = matches.value_of("metrics-server");
 
         let config_path = PathBuf::from(conf);
         let debug = matches.is_present("debug");
@@ -582,7 +588,7 @@ fn main() {
                         (ip, Box::new(uptime::UdpReader::new(addr.to_owned())) as Box<UptimeReader>)
                     ).collect();
                 info!("interfaces: [Rx: {}/{}, Tx: {}/{}] Cores: {}", rx_iface, rx_mac, tx_iface, tx_mac, ncpus);
-                run(config_path, &rx_iface, &tx_iface, rx_mac, tx_mac, qlen, cpu, uptime_readers);
+                run(config_path, &rx_iface, &tx_iface, rx_mac, tx_mac, qlen, cpu, uptime_readers, metrics_server);
             },
             Err(e) => error!("Error parsing config file {}: {:?}", config_path.display(), e),
         }

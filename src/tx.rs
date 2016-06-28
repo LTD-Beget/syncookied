@@ -39,7 +39,7 @@ pub struct Sender<'a> {
     lock: Arc<AtomicUsize>,
     source_mac: MacAddr,
     stats: TxStats,
-    metrics_addr: &'a str,
+    metrics_addr: Option<&'a str>,
 }
 
 impl<'a> Sender<'a> {
@@ -48,7 +48,7 @@ impl<'a> Sender<'a> {
                netmap: &'a mut NetmapDescriptor,
                lock: Arc<AtomicUsize>,
                source_mac: MacAddr,
-               metrics_addr: &'a str) -> Sender<'a> {
+               metrics_addr: Option<&'a str>) -> Sender<'a> {
         Sender {
             ring_num: ring_num,
             cpu: cpu,
@@ -77,7 +77,7 @@ impl<'a> Sender<'a> {
     // main transfer loop
     pub fn run(mut self) {
         info!("TX loop for ring {:?} starting. Rings: {:?}", self.ring_num, self.netmap.get_tx_rings());
-        let metrics_client = metrics::Client::new(self.metrics_addr);
+        let metrics_client = self.metrics_addr.map(metrics::Client::new);
         let hostname = util::get_host_name().unwrap();
         let queue = format!("{}", self.ring_num);
         let ifname = self.netmap.get_ifname();
@@ -150,7 +150,7 @@ impl<'a> Sender<'a> {
                 }
             }
             if before.elapsed() >= ival {
-                {
+                if let Some(ref metrics_client) = metrics_client {
                     let stats = &self.stats;
                     Self::update_metrics(stats, &mut metrics, seconds);
                     metrics_client.send(&metrics);
