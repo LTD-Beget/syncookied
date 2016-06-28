@@ -13,6 +13,7 @@ use ::util;
 use ::libc;
 use ::spsc;
 use ::packet::Action;
+use ::metrics;
 
 #[derive(Debug,Default)]
 struct RxStats {
@@ -43,6 +44,7 @@ pub struct Receiver<'a> {
     lock: Arc<AtomicUsize>,
     mac: MacAddr,
     ring_num: u16,
+    metrics_addr: &'a str,
 }
 
 #[inline(always)]
@@ -73,7 +75,8 @@ impl<'a> Receiver<'a> {
                chan_reply: spsc::Producer<OutgoingPacket>,
                netmap: &'a mut NetmapDescriptor,
                lock: Arc<AtomicUsize>,
-               mac: MacAddr) -> Self {
+               mac: MacAddr,
+               metrics_addr: &'a str) -> Self {
         Receiver {
             ring_num: ring_num,
             cpu: cpu,
@@ -83,6 +86,7 @@ impl<'a> Receiver<'a> {
             lock: lock,
             stats: RxStats::empty(),
             mac: mac,
+            metrics_addr: metrics_addr,
         }
     }
 
@@ -90,10 +94,17 @@ impl<'a> Receiver<'a> {
         ::RoutingTable::sync_tables();
     }
 
+    fn send_metrics(client: &metrics::Client, stats: &RxStats) {
+        let mut metric = metrics::Metric::new("rx_pps");
+        metric.set_value(stats.received as i64);
+        &(*client).send(&[metric]);
+    }
+
     // main RX loop
     pub fn run(mut self) {
         info!("RX loop for ring {:?}", self.ring_num);
         info!("Rx rings: {:?}", self.netmap.get_rx_rings());
+        let metrics_client = metrics::Client::new(self.metrics_addr);
 
         util::set_thread_name(&format!("syncookied/rx{:02}", self.ring_num));
 
@@ -186,6 +197,7 @@ impl<'a> Receiver<'a> {
                 }
             }
             if before.elapsed() >= ival {
+                Self::send_metrics(&metrics_client, &self.stats);
                 rate = self.stats.received/seconds;
                 info!("[RX#{}]: received: {}Pkts/s, dropped: {}Pkts/s, forwarded: {}Pkts/s, queued: {}Pkts/s, overflowed: {}Pkts/s, failed: {}Pkts/s",
                             self.ring_num, rate, self.stats.dropped/seconds,

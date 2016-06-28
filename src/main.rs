@@ -17,6 +17,7 @@ extern crate chan_signal;
 extern crate pcap;
 extern crate bpfjit;
 extern crate chrono;
+extern crate influent;
 
 use std::fmt;
 use std::cell::RefCell;
@@ -51,6 +52,7 @@ mod uptime;
 mod config;
 mod filter;
 mod logging;
+mod metrics;
 use uptime::UptimeReader;
 use packet::{IngressPacket};
 use netmap::{Direction,NetmapDescriptor};
@@ -352,6 +354,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
        rx_mac: MacAddr, tx_mac: MacAddr,
        qlen: u32, first_cpu: usize,
        uptime_readers: Vec<(Ipv4Addr, Box<UptimeReader>)>) {
+    let metrics_addr = "127.0.0.1:8089";
     let rx_nm = Arc::new(Mutex::new(NetmapDescriptor::new(rx_iface).unwrap()));
     let multi_if = rx_iface != tx_iface;
     let tx_nm = if multi_if {
@@ -403,7 +406,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
                         nm.clone_ring(ring, Direction::Input).unwrap()
                     };
                     let cpu = first_cpu + ring as usize;
-                    rx::Receiver::new(ring, cpu, f_tx, tx, &mut ring_nm, rx_pair, rx_mac.clone()).run();
+                    rx::Receiver::new(ring, cpu, f_tx, tx, &mut ring_nm, rx_pair, rx_mac.clone(), metrics_addr).run();
                 });
             }
 
