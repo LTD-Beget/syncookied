@@ -230,7 +230,7 @@ pub struct HostConfiguration {
     state_table: StateTable,
     */
     recent_table: RecentSentTable,
-    filters: Vec<(BpfJitFilter,filter::FilterAction)>,
+    filters: Arc<Vec<(BpfJitFilter,filter::FilterAction)>>,
     default: filter::FilterAction,
 }
 
@@ -246,7 +246,7 @@ impl HostConfiguration {
             state_table: StateTable::new(1024 * 1024),
             */
             recent_table: RecentSentTable::new(),
-            filters: filters,
+            filters: Arc::new(filters),
             default: default,
         }
     }
@@ -254,10 +254,6 @@ impl HostConfiguration {
 
 impl Clone for HostConfiguration {
     fn clone(&self) -> Self {
-        let filters = {
-            let ref filters = self.filters;
-            filters.clone()
-        };
         HostConfiguration {
             mac: self.mac,
             tcp_timestamp: self.tcp_timestamp.clone(),
@@ -268,7 +264,7 @@ impl Clone for HostConfiguration {
             state_table: self.state_table.clone(),
             */
             recent_table: self.recent_table.clone(),
-            filters: filters,
+            filters: self.filters.clone(),
             default: self.default.clone(),
         }
     }
