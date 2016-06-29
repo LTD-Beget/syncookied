@@ -97,7 +97,7 @@ impl<'a> Sender<'a> {
         info!("[TX#{}] started", self.ring_num);
 
         let mut before = time::Instant::now();
-        let seconds: u32 = 5;
+        let seconds: u32 = 7;
         let ival = time::Duration::new(seconds as u64, 0);
         let mut rate: u32 = 0;
 

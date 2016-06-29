@@ -139,7 +139,7 @@ impl<'a> Receiver<'a> {
         self.update_routing_cache();
 
         let mut before = time::Instant::now();
-        let seconds: u32 = 2;
+        let seconds: u32 = 5;
         let mut rate: u32 = 0;
         let ival = time::Duration::new(seconds as u64, 0);
 
