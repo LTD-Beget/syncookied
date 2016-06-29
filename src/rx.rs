@@ -4,8 +4,8 @@ use std::thread;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use ::netmap::{self, NetmapDescriptor, RxSlot};
-use ::OutgoingPacket;
-use ::packet;
+use ::ForwardedPacket;
+use ::packet::{self,IngressPacket};
 use ::scheduler;
 use ::scheduler::{CpuSet, Policy};
 use ::pnet::util::MacAddr;
@@ -38,8 +38,8 @@ impl RxStats {
 
 pub struct Receiver<'a> {
     cpu: usize,
-    chan_reply: spsc::Producer<OutgoingPacket>,
-    chan_fwd: spsc::Producer<OutgoingPacket>,
+    chan_reply: spsc::Producer<IngressPacket>,
+    chan_fwd: spsc::Producer<ForwardedPacket>,
     netmap: &'a mut NetmapDescriptor,
     stats: RxStats,
     lock: Arc<AtomicUsize>,
@@ -49,7 +49,7 @@ pub struct Receiver<'a> {
 }
 
 #[inline(always)]
-fn adaptive_push(chan: &spsc::Producer<OutgoingPacket>, pkt: OutgoingPacket, retries: usize) -> Option<OutgoingPacket> {
+fn adaptive_push<T>(chan: &spsc::Producer<T>, pkt: T, retries: usize) -> Option<T> {
     // fast path
     let mut packet = pkt;
     for _ in 0..retries - 1 {
@@ -72,8 +72,8 @@ fn adaptive_push(chan: &spsc::Producer<OutgoingPacket>, pkt: OutgoingPacket, ret
 
 impl<'a> Receiver<'a> {
     pub fn new(ring_num: u16, cpu: usize,
-               chan_fwd: spsc::Producer<OutgoingPacket>,
-               chan_reply: spsc::Producer<OutgoingPacket>,
+               chan_fwd: spsc::Producer<ForwardedPacket>,
+               chan_reply: spsc::Producer<IngressPacket>,
                netmap: &'a mut NetmapDescriptor,
                lock: Arc<AtomicUsize>,
                mac: MacAddr,
@@ -168,7 +168,11 @@ impl<'a> Receiver<'a> {
 */
                                 to_forward.fetch_add(1, Ordering::SeqCst);
                                 let chan = &self.chan_fwd;
-                                let packet = OutgoingPacket::Forwarded((slot_ptr, buf_ptr, fwd_mac));
+                                let packet = ForwardedPacket {
+                                    slot_ptr: slot_ptr,
+                                    buf_ptr: buf_ptr,
+                                    destination_mac: fwd_mac,
+                                };
                                 match adaptive_push(chan, packet, 1) {
                                     Some(_) => self.stats.failed += 1,
                                     None => {
@@ -178,16 +182,10 @@ impl<'a> Receiver<'a> {
                                 }
                             },
                             Action::Reply(packet) => {
-                                let packet = OutgoingPacket::Ingress(packet);
                                 match self.chan_reply.try_push(packet) {
                                     Some(pkt) => {
                                         self.stats.overflow += 1;
-                                        let chan = &self.chan_fwd;
-                                        /* fall back to chan fwd if available */
-                                        match adaptive_push(chan, pkt, 1) {
-                                            None => self.stats.queued += 1,
-                                            Some(_) => self.stats.failed += 1,
-                                        };
+                                        self.stats.failed += 1;
                                     },
                                     None => self.stats.queued += 1,
                                 }
