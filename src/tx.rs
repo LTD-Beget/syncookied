@@ -5,8 +5,8 @@ use std::thread;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use ::netmap::{self, NetmapDescriptor, TxSlot, NetmapSlot};
-use ::OutgoingPacket;
-use ::packet;
+use ::packet::{self, IngressPacket};
+use ::ForwardedPacket;
 use ::scheduler;
 use ::scheduler::{CpuSet, Policy};
 use ::pnet::util::MacAddr;
@@ -34,7 +34,8 @@ impl TxStats {
 pub struct Sender<'a> {
     ring_num: u16,
     cpu: usize,
-    chan: spsc::Consumer<OutgoingPacket>,
+    chan: Option<spsc::Consumer<IngressPacket>>,
+    fwd_chan: Option<spsc::Consumer<ForwardedPacket>>,
     netmap: &'a mut NetmapDescriptor,
     lock: Arc<AtomicUsize>,
     source_mac: MacAddr,
@@ -44,7 +45,8 @@ pub struct Sender<'a> {
 
 impl<'a> Sender<'a> {
     pub fn new(ring_num: u16, cpu: usize,
-               chan: spsc::Consumer<OutgoingPacket>,
+               chan: Option<spsc::Consumer<IngressPacket>>,
+               fwd_chan: Option<spsc::Consumer<ForwardedPacket>>,
                netmap: &'a mut NetmapDescriptor,
                lock: Arc<AtomicUsize>,
                source_mac: MacAddr,
@@ -53,6 +55,7 @@ impl<'a> Sender<'a> {
             ring_num: ring_num,
             cpu: cpu,
             chan: chan,
+            fwd_chan: fwd_chan,
             netmap: netmap,
             lock: lock,
             source_mac: source_mac,
@@ -98,7 +101,7 @@ impl<'a> Sender<'a> {
         let ival = time::Duration::new(seconds as u64, 0);
         let mut rate: u32 = 0;
 
-        self.update_routing_cache();
+        Self::update_routing_cache();
 
         loop {
             /* block and wait for packet in queue */
@@ -112,15 +115,37 @@ impl<'a> Sender<'a> {
                         let lock = &mut self.lock;
                         let ring_num = self.ring_num;
                         let source_mac = self.source_mac;
-                        match self.chan.try_pop_with(|pkt| {
-                            if rate < 1000 {
-                                ::RoutingTable::sync_tables();
+                        let reply_chan = self.chan.as_ref();
+                        let fwd_chan = self.fwd_chan.as_ref();
+
+                        /* try fwd chan first */
+                        if let Some(fwd_chan) = fwd_chan {
+                            if let None = fwd_chan.try_pop_with(|pkt|
+                                Self::forward(pkt, slot, buf, stats, lock,
+                                           ring_num, source_mac)
+                            ) { /* if nothing in it, try reply_chan */
+                                if let Some(reply_chan) = reply_chan {
+                                    if let None = reply_chan.try_pop_with(|pkt|
+                                        Self::reply(pkt, slot, buf, stats,
+                                           ring_num, source_mac)) {
+                                        if rate <= 1000 {
+                                            Self::update_routing_cache();
+                                        }
+                                        thread::sleep(Duration::new(0, 100));
+                                    }
+                                }
                             }
-                            Self::send(pkt, slot, buf, stats, lock,
-                                       ring_num, source_mac);
-                        }) {
-                            None => thread::sleep(Duration::new(0, 100)),
-                            Some(_) => { },
+                        } else {
+                            if let Some(reply_chan) = reply_chan {
+                                if let None = reply_chan.try_pop_with(|pkt|
+                                    Self::reply(pkt, slot, buf, stats,
+                                       ring_num, source_mac)) {
+                                    if rate <= 1000 {
+                                        Self::update_routing_cache();
+                                    }
+                                    thread::sleep(Duration::new(0, 100));
+                                }
+                            }
                         }
                     }
                     /* try to send more if we have any (non-blocking) */
@@ -129,12 +154,31 @@ impl<'a> Sender<'a> {
                         let lock = &mut self.lock;
                         let ring_num = self.ring_num;
                         let source_mac = self.source_mac;
-                        match self.chan.try_pop_with(|pkt| {
-                                Self::send(pkt, slot, buf, stats, lock,
-                                           ring_num, source_mac);
-                        }) {
-                            None => thread::sleep(Duration::new(0, 200)),
-                            Some(_) => { },
+                        let reply_chan = self.chan.as_ref();
+                        let fwd_chan = self.fwd_chan.as_ref();
+
+                        /* try fwd chan first */
+                        if let Some(fwd_chan) = fwd_chan {
+                            if let None = fwd_chan.try_pop_with(|pkt|
+                                Self::forward(pkt, slot, buf, stats, lock,
+                                           ring_num, source_mac)
+                            ) { /* if nothing in it, try reply_chan */
+                                if let Some(reply_chan) = reply_chan {
+                                    if let None = reply_chan.try_pop_with(|pkt|
+                                        Self::reply(pkt, slot, buf, stats,
+                                           ring_num, source_mac)) {
+                                        thread::sleep(Duration::new(0, 100));
+                                    }
+                                }
+                            }
+                        } else {
+                            if let Some(reply_chan) = reply_chan {
+                                if let None = reply_chan.try_pop_with(|pkt|
+                                    Self::reply(pkt, slot, buf, stats,
+                                       ring_num, source_mac)) {
+                                    thread::sleep(Duration::new(0, 100));
+                                }
+                            }
                         }
 /*
                         if rate <= 1000 {
@@ -159,15 +203,65 @@ impl<'a> Sender<'a> {
                 debug!("[TX#{}]: sent {}Pkts/s, failed {}Pkts/s", self.ring_num, rate, self.stats.failed/seconds);
                 self.stats.clear();
                 before = time::Instant::now();
-                self.update_routing_cache();
+                Self::update_routing_cache();
             }
         }
     }
 
-    fn update_routing_cache(&mut self) {
+    fn update_routing_cache() {
         ::RoutingTable::sync_tables();
     }
 
+    #[inline]
+    fn reply(pkt: &packet::IngressPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxStats,
+            _ring_num: u16, source_mac: MacAddr) {
+        if let Some(len) = packet::handle_reply(pkt, source_mac, buf) {
+            //debug!("[TX#{}] SENDING PACKET\n", ring_num);
+            slot.set_flags(0); //netmap::NS_BUF_CHANGED as u16 /* | netmap::NS_REPORT as u16 */);
+            slot.set_len(len as u16);
+            stats.sent += 1;
+        } else {
+            stats.failed += 1;
+        }
+    }
+
+    #[inline]
+    fn forward(pkt: &ForwardedPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxStats,
+            lock: &mut Arc<AtomicUsize>, _ring_num: u16, source_mac: MacAddr) {
+        use std::slice;
+        /* swap buffers (zero copy) */
+        let rx_slot: &mut TxSlot = unsafe { mem::transmute(pkt.slot_ptr as *mut TxSlot) };
+        let tx_idx = slot.get_buf_idx();
+        let tx_len = slot.get_len();
+
+        slot.set_buf_idx(rx_slot.get_buf_idx());
+        slot.set_len(rx_slot.get_len());
+        slot.set_flags(netmap::NS_BUF_CHANGED);
+
+        rx_slot.set_buf_idx(tx_idx);
+        rx_slot.set_len(tx_len);
+        rx_slot.set_flags(netmap::NS_BUF_CHANGED as u16);
+
+        let to_forward = &lock;
+        to_forward.fetch_sub(1, Ordering::SeqCst);
+
+        let mut buf = unsafe { slice::from_raw_parts_mut::<u8>(pkt.buf_ptr as *mut u8, slot.get_len() as usize) };
+        /*
+           {
+           packet::dump_input(&buf);
+           debug!("[TX#{}]: received slot: {:x} buf: {:x}, buf_idx: {} (was buf_idx: {})",
+           ring_num, slot_ptr, buf_ptr, slot.get_buf_idx(), tx_idx);
+           }
+           */
+        {
+            let mut eth = MutableEthernetPacket::new(&mut buf[0..]).unwrap();
+            eth.set_source(source_mac);
+            eth.set_destination(pkt.destination_mac);
+        }
+        stats.sent += 1;
+    }
+
+    /*
     #[inline]
     fn send(pkt: &OutgoingPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxStats,
             lock: &mut Arc<AtomicUsize>, _ring_num: u16, source_mac: MacAddr) {
@@ -217,4 +311,5 @@ impl<'a> Sender<'a> {
             }
         }
     }
+    */
 }

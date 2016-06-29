@@ -274,6 +274,13 @@ impl Clone for HostConfiguration {
     }
 }
 
+#[derive(Debug)]
+pub struct ForwardedPacket {
+    pub slot_ptr: usize,
+    pub buf_ptr: usize,
+    pub destination_mac: MacAddr,
+}
+
 pub enum OutgoingPacket {
     Ingress(IngressPacket),
     Forwarded((usize, usize, MacAddr)),
@@ -387,12 +394,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
         for ring in 0..rx_count {
             let ring = ring;
             let (tx, rx) = spsc::make(qlen as usize);
-            let (f_tx, f_rx) = if multi_if {
-                let (f_tx, f_rx) = spsc::make(qlen as usize);
-                (Some(f_tx), Some(f_rx))
-            } else {
-                (None, None)
-            };
+            let (f_tx, f_rx) = spsc::make(qlen as usize);
             let pair = Arc::new(AtomicUsize::new(0));
             let rx_pair = pair.clone();
 
@@ -429,7 +431,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
             */
 
             /* second half */
-            if multi_if {
+            let f_rx = if multi_if {
                 let f_tx_nm = rx_nm.clone();
                 let pair = pair.clone();
                 scope.spawn(move || {
@@ -439,9 +441,12 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
                         nm.clone_ring(ring, Direction::Output).unwrap()
                     };
                     let cpu = first_cpu + ring as usize; /* we assume queues/rings are bound to cpus */
-                    tx::Sender::new(ring, cpu, f_rx.unwrap(), &mut ring_nm, pair, rx_mac.clone(), metrics_server).run();
+                    tx::Sender::new(ring, cpu, None, Some(f_rx), &mut ring_nm, pair, rx_mac.clone(), metrics_server).run();
                 });
-            }
+                None
+            } else {
+                Some(f_rx)
+            };
 
             let tx_nm = tx_nm.clone();
             scope.spawn(move || {
@@ -459,7 +464,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
                 } else {
                     0
                 } + first_cpu + ring as usize;
-                tx::Sender::new(ring, cpu, rx, &mut ring_nm, pair, tx_mac, metrics_server).run();
+                tx::Sender::new(ring, cpu, Some(rx), f_rx, &mut ring_nm, pair, tx_mac, metrics_server).run();
             });
         }
 
