@@ -183,7 +183,7 @@ impl<'a> Receiver<'a> {
                             },
                             Action::Reply(packet) => {
                                 match self.chan_reply.try_push(packet) {
-                                    Some(pkt) => {
+                                    Some(_) => {
                                         self.stats.overflow += 1;
                                         self.stats.failed += 1;
                                     },

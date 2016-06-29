@@ -121,7 +121,7 @@ impl<'a> Sender<'a> {
                         /* try fwd chan first */
                         if let Some(fwd_chan) = fwd_chan {
                             if let None = fwd_chan.try_pop_with(|pkt|
-                                Self::forward(pkt, slot, buf, stats, lock,
+                                Self::forward(pkt, slot, stats, lock,
                                            ring_num, source_mac)
                             ) { /* if nothing in it, try reply_chan */
                                 if let Some(reply_chan) = reply_chan {
@@ -160,7 +160,7 @@ impl<'a> Sender<'a> {
                         /* try fwd chan first */
                         if let Some(fwd_chan) = fwd_chan {
                             if let None = fwd_chan.try_pop_with(|pkt|
-                                Self::forward(pkt, slot, buf, stats, lock,
+                                Self::forward(pkt, slot, stats, lock,
                                            ring_num, source_mac)
                             ) { /* if nothing in it, try reply_chan */
                                 if let Some(reply_chan) = reply_chan {
@@ -226,7 +226,7 @@ impl<'a> Sender<'a> {
     }
 
     #[inline]
-    fn forward(pkt: &ForwardedPacket, slot: &mut TxSlot, buf: &mut [u8], stats: &mut TxStats,
+    fn forward(pkt: &ForwardedPacket, slot: &mut TxSlot, stats: &mut TxStats,
             lock: &mut Arc<AtomicUsize>, _ring_num: u16, source_mac: MacAddr) {
         use std::slice;
         /* swap buffers (zero copy) */
