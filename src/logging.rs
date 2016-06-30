@@ -1,4 +1,3 @@
-use ::syslog;
 use ::log;
 use ::chrono;
 

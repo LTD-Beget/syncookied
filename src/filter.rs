@@ -41,5 +41,5 @@ pub fn matches(filters: &[(BpfJitFilter,FilterAction)], buf: &[u8]) -> Option<Fi
             return Some(*action);
         }
     }
-    return None;
+    None
 }

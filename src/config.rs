@@ -107,10 +107,10 @@ impl ConfigLoader {
                     let item = try!(self.parse_host(item));
                     result.push(item);
                 }
-                return Ok(result);
+                Ok(result)
             },
             _ => {
-                return Err(ConfigLoadingError::semantic("Top level must be an array of hashes".to_owned()));
+                Err(ConfigLoadingError::semantic("Top level must be an array of hashes".to_owned()))
             }
         }
     }
@@ -201,13 +201,13 @@ impl ConfigLoader {
                 return Err(ConfigLoadingError::semantic("Invalid doc type".into()));
             }
         }
-        return Ok(HostConfig {
+        Ok(HostConfig {
             ip: ip.unwrap(),
             local_ip: local_ip.unwrap(),
             mac: mac.unwrap(),
             filters: filters,
             default_policy: default_policy,
-        });
+        })
     }
 }
 

@@ -63,9 +63,7 @@ fn adaptive_push<T>(chan: &spsc::Producer<T>, pkt: T, retries: usize) -> Option<
     // no luck
     match chan.try_push(packet) {
         None => None,
-        x => { 
-            return x;
-        },
+        x => x,
     }
 }
 

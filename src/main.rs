@@ -256,8 +256,8 @@ impl Clone for HostConfiguration {
     fn clone(&self) -> Self {
         HostConfiguration {
             mac: self.mac,
-            tcp_timestamp: self.tcp_timestamp.clone(),
-            tcp_cookie_time: self.tcp_cookie_time.clone(),
+            tcp_timestamp: self.tcp_timestamp,
+            tcp_cookie_time: self.tcp_cookie_time,
             hz: self.hz,
             syncookie_secret: self.syncookie_secret.clone(),
             /*
@@ -265,7 +265,7 @@ impl Clone for HostConfiguration {
             */
             recent_table: self.recent_table.clone(),
             filters: self.filters.clone(),
-            default: self.default.clone(),
+            default: self.default,
         }
     }
 }

@@ -65,8 +65,7 @@ pub struct IngressPacket {
 impl Default for IngressPacket {
     fn default() -> Self {
         use std::mem;
-        let pkt = unsafe { mem::zeroed() };
-        pkt
+        unsafe { mem::zeroed() }
     }
 }
 
@@ -97,7 +96,7 @@ pub fn handle_input(packet_data: &[u8], mac: MacAddr) -> Action {
     if let Some(eth) = EthernetPacket::new(packet_data) {
         match handle_ether_packet(&eth, &mut pkt, mac) {
             Action::Reply(_) => Action::Reply(pkt),
-            x@_ => x,
+            x => x,
         }
     } else {
         Action::Drop
@@ -134,15 +133,13 @@ fn handle_ipv4_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket) -> Act
         let mut filter_action = None;
         if ::RoutingTable::with_host_config(pkt.ipv4_destination, |hc| {
             fwd_mac = hc.mac;
-            let ref filters = hc.filters;
-            filter_action = filter::matches(&filters, bytes).or(Some(hc.default))
+            filter_action = filter::matches(&hc.filters, bytes).or(Some(hc.default))
         }) == None {
             return Action::Drop;
         }
         match filter_action {
-            None => {},
-            Some(FilterAction::Pass) => {},
             Some(FilterAction::Drop) => return Action::Drop,
+            None | Some(FilterAction::Pass) => {},
         }
         handle_transport_protocol(header.get_next_level_protocol(),
                                   header.payload(),

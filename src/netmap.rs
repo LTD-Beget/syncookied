@@ -1,4 +1,4 @@
-/// Wraps netmap_sys with some (unsafe) iterators
+/// Wraps `netmap_sys` with some (unsafe) iterators
 extern crate netmap_sys;
 
 use ::libc;
@@ -301,7 +301,7 @@ impl<'d> Iterator for TxRingIter<'d> {
             return None;
         }
         let tx_ring = {
-            let cur = self.cur.clone();
+            let cur = self.cur;
             self.netmap.get_tx_ring(cur)
         };
         self.cur += 1;
@@ -428,7 +428,7 @@ impl NetmapDescriptor {
             netmap_user::nm_open(netmap_ifname.as_ptr(),
                                  ptr::null(),
                                  netmap_user::NM_OPEN_NO_MMAP as u64 | netmap_user::NM_OPEN_IFNAME as u64 /* | flag as u64 */,
-                                 &mut nm_desc_raw)
+                                 &nm_desc_raw)
         };
         if netmap_desc == ptr::null_mut() {
             return Err(NetmapError::new(format!("Can't open ring {}", ring)));
@@ -486,7 +486,7 @@ impl NetmapDescriptor {
                 return Some(tx_ring);
             }
         }
-        return None;
+        None
     }
 
     #[allow(dead_code)]
