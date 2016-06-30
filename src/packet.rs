@@ -22,8 +22,8 @@ pub const MIN_REPLY_BUF_LEN: usize = 74;
 lazy_static! {
     /// Some fields don't change ever so we just copy this template and then 
     /// overwrite changed fields (see build_reply_with_template)
-    static ref REPLY_TEMPLATE: Vec<u8> = {
-        let mut data: Vec<u8> = vec![0;MIN_REPLY_BUF_LEN];
+    static ref REPLY_TEMPLATE: [u8;MIN_REPLY_BUF_LEN] = {
+        let mut data = [0;MIN_REPLY_BUF_LEN];
         /* prepare data common to all packets beforehand */
         {
             let pkt = IngressPacket {
@@ -65,7 +65,7 @@ pub struct IngressPacket {
 impl Default for IngressPacket {
     fn default() -> Self {
         use std::mem;
-        unsafe { mem::zeroed() }
+        unsafe { mem::uninitialized() }
     }
 }
 
@@ -281,25 +281,37 @@ pub fn handle_arp(source_mac: MacAddr, source_ip: Ipv4Addr, dest_ip: Ipv4Addr, b
 
 // main reply handler
 // returns packet size
-#[inline]
+#[inline(never)]
 pub fn handle_reply(pkt: &IngressPacket, source_mac: MacAddr, tx_slice: &mut [u8]) -> Option<usize> {
-    Some(build_reply_with_template(pkt, source_mac, tx_slice))
+    let len = tx_slice.len();
+    if len >= MIN_REPLY_BUF_LEN {
+        build_reply_with_template(pkt, source_mac, tx_slice)
+    } else {
+        None
+    }
 }
 
-fn build_reply_with_template(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> usize {
+fn build_reply_with_template(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> Option<usize> {
     reply[12..MIN_REPLY_BUF_LEN].copy_from_slice(&REPLY_TEMPLATE[12..MIN_REPLY_BUF_LEN]);
     build_reply_fast(pkt, source_mac, reply)
 }
 
-fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> usize {
+macro_rules! try_opt {
+    ($expr:expr) => (match $expr {
+        Some(val) => val,
+        None => return None,
+    })
+}
+
+fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> Option<usize> {
     /* build ethernet packet */
-    let mut ether = MutableEthernetPacket::new(reply).unwrap();
+    let mut ether = try_opt!(MutableEthernetPacket::new(reply));
 
     ether.set_source(source_mac);
     ether.set_destination(pkt.ether_source);
 
     /* build ip packet */
-    let mut ip = MutableIpv4Packet::new(ether.payload_mut()).unwrap();
+    let mut ip = try_opt!(MutableIpv4Packet::new(ether.payload_mut()));
     ip.set_source(pkt.ipv4_destination);
     ip.set_destination(pkt.ipv4_source);
     ip.set_checksum(0);
@@ -318,7 +330,7 @@ fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) 
             pkt.ipv4_source, pkt.ipv4_destination,
             pkt.tcp_source, pkt.tcp_destination, pkt.tcp_sequence,
             pkt.tcp_mss, cookie_time as u32, &secret);
-        let mut tcp = MutableTcpPacket::new(&mut ip.payload_mut()[0..20 + 20]).unwrap();
+        let mut tcp = try_opt!(MutableTcpPacket::new(&mut ip.payload_mut()[0..20 + 20]));
         tcp.set_source(pkt.tcp_destination);
         tcp.set_destination(pkt.tcp_source);
         tcp.set_sequence(seq_num);
@@ -337,7 +349,7 @@ fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) 
                     unsafe { ptr::copy_nonoverlapping::<u8>(ts_option.payload()[0..4].as_ptr(), their_time.as_mut_ptr(), 4) };
                 }
                 */
-                let mut ts = MutableTcpOptionPacket::new(&mut options[6..16]).unwrap();
+                let mut ts = try_opt!(MutableTcpOptionPacket::new(&mut options[6..16]));
                 ts.set_number(TcpOptionNumbers::TIMESTAMPS);
                 ts.get_length_raw_mut()[0] = 10;
                 let mut stamps = ts.payload_mut();
@@ -360,7 +372,7 @@ fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) 
 
     //println!("REPLY: {:?}", &ip);
     //len
-    MIN_REPLY_BUF_LEN // ip.get_total_length()
+    Some(MIN_REPLY_BUF_LEN) // ip.get_total_length()
 }
 
 fn build_reply(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> usize {
