@@ -106,23 +106,20 @@ pub fn handle_input(packet_data: &[u8], mac: MacAddr) -> Action {
 #[inline]
 fn handle_ether_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket, mac: MacAddr) -> Action {
     let bytes = ethernet.packet();
-    let mut tmp_mac_arr = [0; 6];
-    tmp_mac_arr.copy_from_slice(&bytes[0..6]);
-    let mac_dest = MacAddr(tmp_mac_arr);
+    let mac_dest = &bytes[0..6];
 
-    if mac_dest != mac {
+    if mac_dest != mac.0 {
         return Action::Drop;
     }
-    match ethernet.get_ethertype() {
-        EtherTypes::Ipv4 => {
-            tmp_mac_arr.copy_from_slice(&bytes[6..12]);
-            pkt.ether_source = MacAddr(tmp_mac_arr);
-            handle_ipv4_packet(ethernet, pkt)
-        },
-        _  => Action::Drop,
+    if let EtherTypes::Ipv4 = ethernet.get_ethertype() {
+        pkt.ether_source.0.copy_from_slice(&bytes[6..12]);
+        handle_ipv4_packet(ethernet, pkt)
+    } else {
+        Action::Drop
     }
 }
 
+#[inline]
 fn handle_ipv4_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket) -> Action {
     let bytes = ethernet.payload();
     let header = Ipv4Packet::new(bytes);
