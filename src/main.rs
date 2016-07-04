@@ -1,3 +1,4 @@
+#![feature(test)]
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]
@@ -222,8 +223,8 @@ impl RoutingTable {
 
 pub struct HostConfiguration {
     mac: MacAddr,
-    tcp_timestamp: u64,
-    tcp_cookie_time: u64,
+    tcp_timestamp: u32,
+    tcp_cookie_time: u32,
     hz: u32,
     syncookie_secret: [[u32;17];2],
     /*

@@ -101,8 +101,8 @@ pub fn update(ip: Ipv4Addr, buf: Vec<u8>) {
     //println!("jiffies: {}, tcp_cookie_time: {}, syncookie_secret: {:?}", jiffies, tcp_cookie_time, unsafe { syncookie_secret });
     ::RoutingTable::with_host_config_global_mut(ip, |hc| {
         use std::ptr;
-        hc.tcp_timestamp = jiffies & 0xffffffff;
-        hc.tcp_cookie_time = tcp_cookie_time as u64;
+        hc.tcp_timestamp = jiffies as u32;
+        hc.tcp_cookie_time = tcp_cookie_time as u32;
         hc.hz = hz;
         unsafe {
             ptr::copy_nonoverlapping(syncookie_secret[0].as_ptr(), hc.syncookie_secret[0 as usize].as_mut_ptr(), 17);
