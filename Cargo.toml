@@ -23,7 +23,7 @@ chrono = "0.2.22"
 [dependencies.influent]
 git = "https://github.com/polachok/influent.rs"
 branch = "udp+"
-rev = "a2173c040baf099ec88ac47d8b2604868346cc23"
+rev = "c56247afeb2d7aac7dc0b6365aa89026f46ff5c7"
 default-features = false
 features = []
 
