@@ -33,16 +33,16 @@ pub fn tcp_checksum(packet: &TcpPacket, ipv4_source: Ipv4Addr,
 
     sum += next_level_protocol as u32;
     let bytes = packet.packet();
-    let len = bytes.len();
-    sum += len as u32;
-    unsafe { csum_partial_folded(bytes.as_ptr(), len as u32, sum.to_be()) }
+    let len = bytes.len() as u32;
+    sum += len;
+    unsafe { csum_partial_folded(bytes.as_ptr(), len, sum.to_be()) }
 }
 
 pub fn ip_checksum(packet: &Ipv4Packet) -> u16 {
     use pnet::packet::Packet;
 
-    let len = packet.get_header_length() as usize * 4;
+    let len = packet.get_header_length() as u32 * 4;
     let bytes = packet.packet();
 
-    unsafe { ip_compute_csum(bytes.as_ptr(), len as u32) }
+    unsafe { ip_compute_csum(bytes.as_ptr(), len) }
 }

@@ -210,9 +210,3 @@ impl ConfigLoader {
         })
     }
 }
-
-#[test]
-fn fuck() {
-    parse_file(Path::new("hosts.yml"));
-    ConfigLoader::new(Path::new("hosts.yml")).parse_all();
-}
