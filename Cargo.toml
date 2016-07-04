@@ -57,7 +57,7 @@ features = [ "netmap_with_libs" ]
 
 [dependencies.pnet]
 git = "https://github.com/polachok/libpnet"
-rev = "1e55befffd630cef33209396d629efc87fe8c74f"
+rev = "8eeb66788c2cd71228b15a80e8ae894ed56b4510"
 branch = "syncookied"
 
 [dependencies.intmap]
