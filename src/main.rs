@@ -111,6 +111,9 @@ struct StateTable {
 
 impl fmt::Debug for StateTable {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.map.population() == 0 {
+            write!(f, "StateTable empty\n");
+        }
         let entries = self.map.entries();
         fn decode_key(k: usize) -> (Ipv4Addr, u16, u16) {
             let ip = Ipv4Addr::from((k >> 32) as u32);
@@ -125,7 +128,7 @@ impl fmt::Debug for StateTable {
             if entry.key() == 0 || entry.value() == 0 {
                 continue;
             }
-            write!(f, "{:?} -> {:?}", decode_key(entry.key()), decode_val(entry.value()));
+            write!(f, "{:?} -> {:?}\n", decode_key(entry.key()), decode_val(entry.value()));
         }
         write!(f, "")
     }
