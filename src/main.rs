@@ -111,7 +111,20 @@ struct StateTable {
 
 impl fmt::Debug for StateTable {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "StateTable")
+        let entries = self.map.entries();
+        fn decode_key(k: usize) -> (Ipv4Addr, u16, u16) {
+            let ip = Ipv4Addr::from((k >> 32) as u32);
+            let src_port = ((k & 0xffffffff) >> 16) as u16;
+            let dst_port = k as u16;
+            (ip, src_port, dst_port)
+        }
+        fn decode_val(v: usize) -> ConnState {
+            ConnState::from(v - 1)
+        }
+        for entry in entries.iter() {
+            write!(f, "{:?} -> {:?}", decode_key(entry.key()), decode_val(entry.value()));
+        }
+        write!(f, "")
     }
 }
 
