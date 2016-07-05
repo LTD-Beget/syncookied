@@ -153,7 +153,7 @@ impl StateTable {
         let key: usize = int_ip << 32
                          | (source_port as usize) << 16
                          | dest_port as usize;
-        self.map.get(key).map(|val| ConnState::from(val))
+        self.map.get(key).map(|val| ConnState::from(val - 1))
     }
 
     pub fn delete_state(&mut self, ip: Ipv4Addr, source_port: u16, dest_port: u16) {
