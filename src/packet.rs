@@ -205,6 +205,7 @@ fn handle_tcp_syn(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
 
 #[inline]
 fn handle_tcp_ack(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) -> Action {
+    use std::mem;
     let cookie = tcp.get_acknowledgement() - 1;
     let tcp_saddr = tcp.get_source();
     let tcp_daddr = tcp.get_destination();
@@ -222,8 +223,12 @@ fn handle_tcp_ack(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
             /* println!("Check cookie for {}:{} -> {}:{}",
                ip_saddr, tcp_saddr, ip_daddr, tcp_daddr,
                ); */
+            let mut secret: [[u32;17];2] = unsafe { mem::uninitialized() };
+            secret[0].copy_from_slice(&hc.syncookie_secret[0][0..17]);
+            secret[1].copy_from_slice(&hc.syncookie_secret[1][0..17]);
+
             let res = cookie::cookie_check(ip_saddr, ip_daddr, tcp_saddr, tcp_daddr, 
-                                           seq, cookie);
+                                           seq, cookie, &secret);
             //println!("check result is {:?}", res);
             if res.is_some() {
                 hc.state_table.set_state(ip_saddr, tcp_saddr, tcp_daddr, ConnState::Established);
