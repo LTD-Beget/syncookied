@@ -122,6 +122,9 @@ impl fmt::Debug for StateTable {
             ConnState::from(v - 1)
         }
         for entry in entries.iter() {
+            if entry.key() == 0 || entry.value() == 0 {
+                continue;
+            }
             write!(f, "{:?} -> {:?}", decode_key(entry.key()), decode_val(entry.value()));
         }
         write!(f, "")
