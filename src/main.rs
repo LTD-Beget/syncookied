@@ -115,6 +115,22 @@ impl fmt::Debug for StateTable {
     }
 }
 
+#[derive(Debug)]
+enum ConnState {
+    Established, // first ACK received and valid
+    Closing, // FIN received
+}
+
+impl From<usize> for ConnState {
+    fn from(x: usize) -> Self {
+        match x {
+            0 => ConnState::Established,
+            1 => ConnState::Closing,
+            x => panic!("invalid connection state {}", x),
+        }
+    }
+}
+
 // TODO: implement removal in LocklessIntMap
 // note: currently unused
 impl StateTable {
@@ -124,20 +140,20 @@ impl StateTable {
         }
     }
 
-    pub fn add_state(&mut self, ip: Ipv4Addr, source_port: u16, dest_port: u16, state: usize) {
+    pub fn set_state(&mut self, ip: Ipv4Addr, source_port: u16, dest_port: u16, state: ConnState) {
         let int_ip = u32::from(ip) as usize;
         let key: usize = int_ip << 32
                          | (source_port as usize) << 16
                          | dest_port as usize;
-        self.map.insert(key, state);
+        self.map.insert(key, (state as usize) + 1);
     }
     
-    pub fn get_state(&self, ip: Ipv4Addr, source_port: u16, dest_port: u16) -> Option<usize> {
+    pub fn get_state(&self, ip: Ipv4Addr, source_port: u16, dest_port: u16) -> Option<ConnState> {
         let int_ip = u32::from(ip) as usize;
         let key: usize = int_ip << 32
                          | (source_port as usize) << 16
                          | dest_port as usize;
-        self.map.get(key)
+        self.map.get(key).map(|val| ConnState::from(val))
     }
 
     pub fn delete_state(&mut self, ip: Ipv4Addr, source_port: u16, dest_port: u16) {

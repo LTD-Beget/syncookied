@@ -17,6 +17,7 @@ use ::cookie;
 use ::csum;
 use ::filter;
 use ::filter::FilterAction;
+use ::ConnState;
 
 pub const MIN_REPLY_BUF_LEN: usize = 74;
 
@@ -225,7 +226,7 @@ fn handle_tcp_ack(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
                                            seq, cookie);
             //println!("check result is {:?}", res);
             if res.is_some() {
-                hc.state_table.add_state(ip_saddr, tcp_saddr, tcp_daddr, 1);
+                hc.state_table.set_state(ip_saddr, tcp_saddr, tcp_daddr, ConnState::Established);
                 action = Action::Forward(*fwd_mac);
             } else {
                 //println!("Bad cookie, drop");
@@ -253,25 +254,45 @@ fn handle_tcp_rst(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
 }
 
 #[inline]
+fn handle_tcp_fin(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) -> Action {
+    let tcp_saddr = tcp.get_source();
+    let tcp_daddr = tcp.get_destination();
+    let ip_saddr = pkt.ipv4_source;
+    let ip_daddr = pkt.ipv4_destination;
+    let mut action = Action::Drop;
+
+    ::RoutingTable::with_host_config_mut(ip_daddr, |hc| {
+        if hc.state_table.get_state(ip_saddr, tcp_saddr, tcp_daddr).is_some() {
+            action = Action::Forward(*fwd_mac);
+            hc.state_table.set_state(ip_saddr, tcp_saddr, tcp_daddr, ConnState::Closing);
+        }
+    });
+    action
+}
+
+#[inline]
 fn handle_tcp_packet(packet: &[u8], fwd_mac: &MacAddr, pkt: &mut IngressPacket) -> Action {
     use std::ptr;
     let tcp = TcpPacket::new(packet);
     if let Some(tcp) = tcp {
         //println!("TCP Packet: {}:{} > {}:{}; length: {}", source,
         //            tcp.get_source(), destination, tcp.get_destination(), packet.len());
-        if tcp.get_flags() & (TcpFlags::SYN | TcpFlags::ACK) == TcpFlags::SYN {
+        let flags = tcp.get_flags();
+
+        if flags & (TcpFlags::SYN | TcpFlags::ACK) == TcpFlags::SYN {
             return handle_tcp_syn(tcp, fwd_mac, pkt);
         }
 
-        let flags = tcp.get_flags();
+        if flags & TcpFlags::ACK != 0 {
+            return handle_tcp_ack(tcp, fwd_mac, pkt);
+        }
 
         if flags & TcpFlags::RST != 0 {
             return handle_tcp_rst(tcp, fwd_mac, pkt);
         }
 
-        if flags & TcpFlags::ACK != 0 {
-            return handle_tcp_ack(tcp, fwd_mac, pkt);
-            //println!("{}:{} -> {}:{} action: {:?}", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr, action);
+        if flags & TcpFlags::FIN != 0 {
+            return handle_tcp_fin(tcp, fwd_mac, pkt);
         }
         Action::Forward(*fwd_mac)
     } else {
