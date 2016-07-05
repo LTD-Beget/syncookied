@@ -104,7 +104,6 @@ impl RecentSentTable {
     }
 }
 
-/*
 #[derive(Clone)]
 struct StateTable {
     map: LocklessIntMap<BuildHasherDefault<fnv::FnvHasher>>,
@@ -140,8 +139,15 @@ impl StateTable {
                          | dest_port as usize;
         self.map.get(key)
     }
+
+    pub fn delete_state(&mut self, ip: Ipv4Addr, source_port: u16, dest_port: u16) {
+        let int_ip = u32::from(ip) as usize;
+        let key: usize = int_ip << 32
+                         | (source_port as usize) << 16
+                         | dest_port as usize;
+        self.map.delete(key);
+    }
 }
-*/
 
 // TODO: rename to sth. more appropriate (FibTable, ConfigTable?)
 pub struct RoutingTable;
@@ -227,9 +233,7 @@ pub struct HostConfiguration {
     tcp_cookie_time: u32,
     hz: u32,
     syncookie_secret: [[u32;17];2],
-    /*
     state_table: StateTable,
-    */
     recent_table: RecentSentTable,
     filters: Arc<Vec<(BpfJitFilter,filter::FilterAction)>>,
     default: filter::FilterAction,
@@ -243,9 +247,7 @@ impl HostConfiguration {
             tcp_cookie_time: 0,
             hz: 300,
             syncookie_secret: [[0;17];2],
-            /*
             state_table: StateTable::new(1024 * 1024),
-            */
             recent_table: RecentSentTable::new(),
             filters: Arc::new(filters),
             default: default,
@@ -261,9 +263,7 @@ impl Clone for HostConfiguration {
             tcp_cookie_time: self.tcp_cookie_time,
             hz: self.hz,
             syncookie_secret: self.syncookie_secret.clone(),
-            /*
             state_table: self.state_table.clone(),
-            */
             recent_table: self.recent_table.clone(),
             filters: self.filters.clone(),
             default: self.default,

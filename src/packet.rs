@@ -161,6 +161,98 @@ fn handle_transport_protocol(protocol: IpNextHeaderProtocol, packet: &[u8],
 }
 
 #[inline]
+fn handle_tcp_syn(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) -> Action {
+    //println!("TCP Packet: {:?}", tcp);
+    let ip_daddr = pkt.ipv4_destination;
+    let mut need_forward = false;
+
+    pkt.tcp_source = tcp.get_source();
+    pkt.tcp_destination = tcp.get_destination();
+    pkt.tcp_sequence = tcp.get_sequence();
+    /* we need to touch destination server listening socket from
+     * time to time to avoid getting into tcp_synq_no_recent_overflow()
+     * so here we keep track of how much time passed since SYN
+     * was sent and send one if it is > 1sec
+     */
+    ::RoutingTable::with_host_config(ip_daddr, |hc| {
+        match hc.recent_table.get_last_touched(pkt.tcp_destination) {
+            Some(val) => {
+                let diff = hc.tcp_timestamp as u32 - val as u32;
+                if diff > 30 * hc.hz {
+                    need_forward = true;
+                    debug!("Touch port {} (val: {} ts: {} diff: {}, hz: {})", pkt.tcp_destination, hc.tcp_timestamp as u32, val as u32, diff, hc.hz);
+                }
+            },
+            None => need_forward = true,
+        }
+    });
+    if need_forward {
+        ::RoutingTable::with_host_config_mut(ip_daddr, |hc| {
+            hc.recent_table.touch(pkt.tcp_destination, hc.tcp_timestamp as usize);
+        });
+        return Action::Forward(*fwd_mac);
+    }
+
+    let in_options = tcp.get_options_iter();
+    if let Some(ts_option) = in_options.filter(|opt| (*opt).get_number() == TcpOptionNumbers::TIMESTAMPS).nth(0) {
+        pkt.tcp_timestamp[0..4].copy_from_slice(&ts_option.payload()[0..4]);
+        //unsafe { ptr::copy_nonoverlapping::<u8>(ts_option.payload()[0..4].as_ptr(), pkt.tcp_timestamp.as_mut_ptr(), 4) };
+    }
+    pkt.tcp_mss = 1460; /* HACK */
+    return Action::Reply(IngressPacket::default());
+}
+
+#[inline]
+fn handle_tcp_ack(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) -> Action {
+    let cookie = tcp.get_acknowledgement() - 1;
+    let tcp_saddr = tcp.get_source();
+    let tcp_daddr = tcp.get_destination();
+    let ip_saddr = pkt.ipv4_source;
+    let ip_daddr = pkt.ipv4_destination;
+    let seq = tcp.get_sequence();
+    let mut action = Action::Drop;
+
+    ::RoutingTable::with_host_config_mut(ip_daddr, |hc| {
+        if hc.state_table.get_state(ip_saddr, tcp_saddr, tcp_daddr).is_some() {
+            //println!("Have state for {}:{} -> {}:{}, passing", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
+            action = Action::Forward(*fwd_mac)
+        } else {
+            //println!("State for {}:{} -> {}:{} not found", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
+            /* println!("Check cookie for {}:{} -> {}:{}",
+               ip_saddr, tcp_saddr, ip_daddr, tcp_daddr,
+               ); */
+            let res = cookie::cookie_check(ip_saddr, ip_daddr, tcp_saddr, tcp_daddr, 
+                                           seq, cookie);
+            //println!("check result is {:?}", res);
+            if res.is_some() {
+                hc.state_table.add_state(ip_saddr, tcp_saddr, tcp_daddr, 1);
+                action = Action::Forward(*fwd_mac);
+            } else {
+                //println!("Bad cookie, drop");
+            }
+        }
+    });
+    action
+}
+
+#[inline]
+fn handle_tcp_rst(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) -> Action {
+    let tcp_saddr = tcp.get_source();
+    let tcp_daddr = tcp.get_destination();
+    let ip_saddr = pkt.ipv4_source;
+    let ip_daddr = pkt.ipv4_destination;
+    let mut action = Action::Drop;
+
+    ::RoutingTable::with_host_config_mut(ip_daddr, |hc| {
+        if hc.state_table.get_state(ip_saddr, tcp_saddr, tcp_daddr).is_some() {
+            action = Action::Forward(*fwd_mac);
+            hc.state_table.delete_state(ip_saddr, tcp_saddr, tcp_daddr);
+        }
+    });
+    action
+}
+
+#[inline]
 fn handle_tcp_packet(packet: &[u8], fwd_mac: &MacAddr, pkt: &mut IngressPacket) -> Action {
     use std::ptr;
     let tcp = TcpPacket::new(packet);
@@ -168,86 +260,19 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: &MacAddr, pkt: &mut IngressPacket) 
         //println!("TCP Packet: {}:{} > {}:{}; length: {}", source,
         //            tcp.get_source(), destination, tcp.get_destination(), packet.len());
         if tcp.get_flags() & (TcpFlags::SYN | TcpFlags::ACK) == TcpFlags::SYN {
-            //println!("TCP Packet: {:?}", tcp);
-            let ip_daddr = pkt.ipv4_destination;
-            let mut need_forward = false;
-
-            pkt.tcp_source = tcp.get_source();
-            pkt.tcp_destination = tcp.get_destination();
-            pkt.tcp_sequence = tcp.get_sequence();
-            /* we need to touch destination server listening socket from
-             * time to time to avoid getting into tcp_synq_no_recent_overflow()
-             * so here we keep track of how much time passed since SYN
-             * was sent and send one if it is > 1sec
-             */
-            ::RoutingTable::with_host_config(ip_daddr, |hc| {
-                match hc.recent_table.get_last_touched(pkt.tcp_destination) {
-                    Some(val) => {
-                        let diff = hc.tcp_timestamp as u32 - val as u32;
-                        if diff > 30 * hc.hz {
-                            need_forward = true;
-                            debug!("Touch port {} (val: {} ts: {} diff: {}, hz: {})", pkt.tcp_destination, hc.tcp_timestamp as u32, val as u32, diff, hc.hz);
-                        }
-                    },
-                    None => need_forward = true,
-                }
-            });
-            if need_forward {
-                ::RoutingTable::with_host_config_mut(ip_daddr, |hc| {
-                    hc.recent_table.touch(pkt.tcp_destination, hc.tcp_timestamp as usize);
-                });
-                return Action::Forward(*fwd_mac);
-            }
-
-            let in_options = tcp.get_options_iter();
-            if let Some(ts_option) = in_options.filter(|opt| (*opt).get_number() == TcpOptionNumbers::TIMESTAMPS).nth(0) {
-                pkt.tcp_timestamp[0..4].copy_from_slice(&ts_option.payload()[0..4]);
-                //unsafe { ptr::copy_nonoverlapping::<u8>(ts_option.payload()[0..4].as_ptr(), pkt.tcp_timestamp.as_mut_ptr(), 4) };
-            }
-            pkt.tcp_mss = 1460; /* HACK */
-            return Action::Reply(IngressPacket::default());
+            return handle_tcp_syn(tcp, fwd_mac, pkt);
         }
-        /* disable stateful firewall for now */
-        /*
-        if false /* tcp.get_flags() & TcpFlags::ACK == TcpFlags::ACK */ {
-            let cookie = tcp.get_acknowledgement() - 1;
-            let tcp_saddr = tcp.get_source();
-            let tcp_daddr = tcp.get_destination();
-            let ip_saddr = pkt.ipv4_source;
-            let ip_daddr = pkt.ipv4_destination;
-            let seq = tcp.get_sequence();
-            let mut action = Action::Drop;
-            let mut new = false;
 
-            ::RoutingTable::with_host_config(ip_daddr, |hc| {
-                if hc.state_table.get_state(ip_saddr, tcp_saddr, tcp_daddr).is_some() {
-                    //println!("Have state for {}:{} -> {}:{}, passing", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
-                    action = Action::Forward(fwd_mac)
-                } else {
-                    //println!("State for {}:{} -> {}:{} not found", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
-                    /* println!("Check cookie for {}:{} -> {}:{}",
-                             ip_saddr, tcp_saddr, ip_daddr, tcp_daddr,
-                             ); */
-                    let res = cookie::cookie_check(ip_saddr, ip_daddr, tcp_saddr, tcp_daddr, 
-                                                   seq, cookie);
-                    //println!("check result is {:?}", res);
-                    if res.is_some() {
-                        new = true;
-                        action = Action::Forward(fwd_mac);
-                    } else {
-                        //println!("Bad cookie, drop");
-                    }
-                }
-            });
-            if new {
-                ::RoutingTable::with_host_config_mut(ip_daddr, |hc| {
-                    hc.state_table.add_state(ip_saddr, tcp_saddr, tcp_daddr, 1);
-                });
-            }
+        let flags = tcp.get_flags();
+
+        if flags & TcpFlags::RST != 0 {
+            return handle_tcp_rst(tcp, fwd_mac, pkt);
+        }
+
+        if flags & TcpFlags::ACK != 0 {
+            return handle_tcp_ack(tcp, fwd_mac, pkt);
             //println!("{}:{} -> {}:{} action: {:?}", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr, action);
-            return action;
         }
-        */
         Action::Forward(*fwd_mac)
     } else {
         println!("Malformed TCP Packet");
