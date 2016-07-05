@@ -215,13 +215,19 @@ fn handle_tcp_ack(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
     let mut action = Action::Drop;
 
     ::RoutingTable::with_host_config_mut(ip_daddr, |hc| {
-        if hc.state_table.get_state(ip_saddr, tcp_saddr, tcp_daddr).is_some() {
+        match hc.state_table.get_state(ip_saddr, tcp_saddr, tcp_daddr) {
+        Some(ConnState::Established) => {
             debug!("Have state for {}:{} -> {}:{}, passing", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
-            action = Action::Forward(*fwd_mac)
-        } else {
+            action = Action::Forward(*fwd_mac);
+        },
+        Some(ConnState::Closing) => {
+            debug!("Have state for {}:{} -> {}:{}, passing and closing", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
+            hc.state_table.delete_state(ip_saddr, tcp_saddr, tcp_daddr);
+            action = Action::Forward(*fwd_mac);
+        },
+        None => {
             debug!("State for {}:{} -> {}:{} not found", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
-            debug!("Check cookie for {}:{} -> {}:{}",
-               ip_saddr, tcp_saddr, ip_daddr, tcp_daddr,
+            debug!("Check cookie for {}:{} -> {}:{}", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr,
                );
             let mut secret: [[u32;17];2] = unsafe { mem::uninitialized() };
             let cookie_time = hc.tcp_cookie_time;
@@ -237,8 +243,8 @@ fn handle_tcp_ack(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
             } else {
                 debug!("Bad cookie, drop");
             }
-        }
-    });
+        },
+    }});
     action
 }
 
