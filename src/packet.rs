@@ -348,6 +348,7 @@ fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) 
                 //ts.set_number(TcpOptionNumbers::TIMESTAMPS);
                 //ts.get_length_raw_mut()[0] = 10;
                 let mut stamps = ts.payload_mut();
+                /* TODO: replace hard coded values */
                 stamps[0..4].copy_from_slice(&u32_to_oct(cookie::synproxy_init_timestamp_cookie(7, 1, 0, my_tcp_time))[0..4]);
                 stamps[4..8].copy_from_slice(&pkt.tcp_timestamp[0..4]);
             }
