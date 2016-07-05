@@ -220,7 +220,7 @@ impl RoutingTable {
             for ip in ips {
                 let r = rt.borrow();
                 if let Some(ref hc) = r.get(&ip) {
-                    println!("{:?}", hc.state_table);
+                    println!("[{}] {:?}", ip, hc.state_table);
                 }
             }
         });
