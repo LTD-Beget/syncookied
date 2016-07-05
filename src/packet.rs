@@ -224,11 +224,12 @@ fn handle_tcp_ack(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
                ip_saddr, tcp_saddr, ip_daddr, tcp_daddr,
                );
             let mut secret: [[u32;17];2] = unsafe { mem::uninitialized() };
+            let cookie_time = hc.tcp_cookie_time;
             secret[0].copy_from_slice(&hc.syncookie_secret[0][0..17]);
             secret[1].copy_from_slice(&hc.syncookie_secret[1][0..17]);
 
             let res = cookie::cookie_check(ip_saddr, ip_daddr, tcp_saddr, tcp_daddr, 
-                                           seq, cookie, &secret);
+                                           seq, cookie, &secret, cookie_time);
             //println!("check result is {:?}", res);
             if res.is_some() {
                 hc.state_table.set_state(ip_saddr, tcp_saddr, tcp_daddr, ConnState::Established);

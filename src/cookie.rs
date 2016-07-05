@@ -79,9 +79,10 @@ pub fn generate_cookie_init_sequence(source_addr: Ipv4Addr, dest_addr: Ipv4Addr,
 #[allow(dead_code)]
 #[inline]
 fn check_tcp_syn_cookie(cookie: u32, saddr: u32, daddr: u32,
-                        sport: u16, dport: u16, sseq: u32, secret: &[[u32;17];2]) -> u32 {
+                        sport: u16, dport: u16, sseq: u32,
+                        secret: &[[u32;17];2], cookie_time: u32) -> u32 {
     let diff: Wrapping<u32>;
-    let mut count: Wrapping<u32> = Wrapping(0);
+    let mut count: Wrapping<u32> = Wrapping(cookie_time);
     let mut cookie = Wrapping(cookie);
     /* Strip away the layers from the cookie */
     cookie -= Wrapping(cookie_hash(saddr, daddr, sport, dport, 0, &secret[0])) + Wrapping(sseq);
@@ -102,12 +103,12 @@ fn check_tcp_syn_cookie(cookie: u32, saddr: u32, daddr: u32,
 #[inline]
 pub fn cookie_check(source_addr: Ipv4Addr, dest_addr: Ipv4Addr,
                     source_port: u16, dest_port: u16, seq: u32,
-                    cookie: u32, secret: &[[u32;17];2]) -> Option<&'static u16> {
+                    cookie: u32, secret: &[[u32;17];2], cookie_time: u32) -> Option<&'static u16> {
     let seq = seq - 1;
     let sa: u32 = source_addr.into();
     let da: u32 = dest_addr.into();
     let mssind = check_tcp_syn_cookie(cookie, sa.to_be(), da.to_be(),
-                        source_port.to_be(), dest_port.to_be(), seq, secret);
+                        source_port.to_be(), dest_port.to_be(), seq, secret, cookie_time);
     if mssind > 3 {
         //println!("COOKIE MSS IDX: {}", mssind);
     }
