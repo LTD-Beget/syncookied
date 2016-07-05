@@ -211,6 +211,18 @@ impl RoutingTable {
         })
     }
 
+    pub fn dump_states() {
+        let ips = Self::get_ips();
+        LOCAL_ROUTING_TABLE.with(|rt| {
+            for ip in ips {
+                let r = rt.borrow();
+                if let Some(ref hc) = r.get(&ip) {
+                    println!("{:?}", hc.state_table);
+                }
+            }
+        });
+    }
+
     pub fn with_host_config<F>(ip: Ipv4Addr, mut f: F) -> Option<()> where F: FnMut(&HostConfiguration) {
         LOCAL_ROUTING_TABLE.with(|rt| {
             let r = rt.borrow();
@@ -343,7 +355,7 @@ fn run_uptime_readers(reload_lock: Arc<(Mutex<bool>, Condvar)>, uptime_readers: 
 }
 
 fn handle_signals(path: PathBuf, reload_lock: Arc<(Mutex<bool>, Condvar)>) {
-    let signal = chan_signal::notify(&[Signal::HUP, Signal::INT]);
+    let signal = chan_signal::notify(&[Signal::HUP, Signal::INT, Signal::USR1]);
     thread::spawn(move || loop {
         ::util::set_thread_name("syncookied/sig");
         match signal.recv().unwrap() {
@@ -369,6 +381,10 @@ fn handle_signals(path: PathBuf, reload_lock: Arc<(Mutex<bool>, Condvar)>) {
                     },
                     Err(e) => error!("Error parsing config file {}: {:?}", path.display(), e),
                 }
+            },
+            Signal::USR1 => {
+                ::RoutingTable::sync_tables();
+                ::RoutingTable::dump_states();
             },
             Signal::INT => {
                 use std::process;
