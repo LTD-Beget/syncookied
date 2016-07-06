@@ -62,7 +62,7 @@ branch = "syncookied"
 
 [dependencies.intmap]
 git = "https://github.com/polachok/intmap"
-rev = "355120b7488afe844f56680f4ab43d2f235c900c"
+rev = "57eb64370d0400ceafce1d6c154375ff1cda83d1"
 
 [build-dependencies]
 gcc = "0.3.26"
