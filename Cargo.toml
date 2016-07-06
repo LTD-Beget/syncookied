@@ -20,6 +20,11 @@ log = "0.3.6"
 syslog = "3.1.0"
 chrono = "0.2.22"
 
+[dependencies.concurrent-hash-map]
+git = "https://github.com/polachok/concurrent-hash-map"
+branch = "hasher"
+rev = "7a36b53b7d19755a34bf27d0ff6cde68d1e9af1d"
+
 [dependencies.influent]
 git = "https://github.com/polachok/influent.rs"
 branch = "udp+"

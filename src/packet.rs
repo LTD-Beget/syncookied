@@ -175,6 +175,7 @@ fn handle_tcp_syn(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
      * so here we keep track of how much time passed since SYN
      * was sent and send one if it is > 1sec
      */
+/*
     ::RoutingTable::with_host_config(ip_daddr, |hc| {
         match hc.recent_table.get_last_touched(pkt.tcp_destination) {
             Some(val) => {
@@ -193,7 +194,7 @@ fn handle_tcp_syn(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
         });
         return Action::Forward(*fwd_mac);
     }
-
+*/
     let in_options = tcp.get_options_iter();
     if let Some(ts_option) = in_options.filter(|opt| (*opt).get_number() == TcpOptionNumbers::TIMESTAMPS).nth(0) {
         pkt.tcp_timestamp[0..4].copy_from_slice(&ts_option.payload()[0..4]);

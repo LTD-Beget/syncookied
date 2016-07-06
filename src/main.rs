@@ -19,6 +19,7 @@ extern crate pcap;
 extern crate bpfjit;
 extern crate chrono;
 extern crate influent;
+extern crate concurrent_hash_map;
 
 use std::fmt;
 use std::cell::RefCell;
@@ -32,6 +33,7 @@ use std::str::FromStr;
 use pnet::util::MacAddr;
 use parking_lot::{RwLock,Mutex,Condvar};
 use intmap::LocklessIntMap;
+use concurrent_hash_map::ConcurrentHashMap;
 
 use std::collections::BTreeMap;
 use std::hash::BuildHasherDefault;
@@ -106,12 +108,12 @@ impl RecentSentTable {
 
 #[derive(Clone)]
 struct StateTable {
-    map: LocklessIntMap<BuildHasherDefault<fnv::FnvHasher>>,
+    map: ConcurrentHashMap<usize,usize, BuildHasherDefault<fnv::FnvHasher>>,
 }
 
 impl fmt::Debug for StateTable {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.map.population() == 0 {
+        if self.map.len() == 0 {
             write!(f, "StateTable empty\n");
         }
         let entries = self.map.entries();
@@ -125,12 +127,9 @@ impl fmt::Debug for StateTable {
             ConnState::from((v & 0xffffffff) - 1)
         }
         for entry in entries.iter() {
-            if entry.key() == 0 || entry.value() == 0 {
-                continue;
-            }
-            write!(f, "{:?} -> {:?}\n", decode_key(entry.key()), decode_val(entry.value()));
+            write!(f, "{:?} -> {:?}\n", decode_key(entry.0), decode_val(entry.1));
         }
-        write!(f, "StateTable: {} entries\n", self.map.population())
+        write!(f, "StateTable: {} entries\n", self.map.len())
     }
 }
 
@@ -155,7 +154,7 @@ impl From<usize> for ConnState {
 impl StateTable {
     fn new(size: usize) -> Self {
         StateTable {
-            map: LocklessIntMap::new(size, BuildHasherDefault::<fnv::FnvHasher>::default())
+            map: ConcurrentHashMap::new_with_options(size as u32, 1024, 0.8, BuildHasherDefault::<fnv::FnvHasher>::default()),
         }
     }
 
@@ -181,7 +180,7 @@ impl StateTable {
         let key: usize = int_ip << 32
                          | (source_port as usize) << 16
                          | dest_port as usize;
-        self.map.delete(key);
+        self.map.remove(key);
     }
 }
 
@@ -390,8 +389,8 @@ fn state_table_gc() {
                 hz = hc.hz;
             });
             for e in entries {
-                let k = e.key();
-                let (ts, cs) = decode_val(e.value());
+                let k = e.0;
+                let (ts, cs) = decode_val(e.1);
                 println!("Curr. ts: {}, entry ts: {}", timestamp, ts);
                 if cs == ConnState::Closing && ts < timestamp - 120 * hz {
                     ::RoutingTable::with_host_config_mut(ip, |hc| {
