@@ -217,12 +217,12 @@ fn handle_tcp_ack(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
     ::RoutingTable::with_host_config_mut(ip_daddr, |hc| {
         match hc.state_table.get_state(ip_saddr, tcp_saddr, tcp_daddr) {
         Some(ConnState::Established) => {
-            debug!("Have state for {}:{} -> {}:{}, passing", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
+            debug!("Found established state for {}:{} -> {}:{}, passing", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
             action = Action::Forward(*fwd_mac);
         },
         Some(ConnState::Closing) => {
-            debug!("Have state for {}:{} -> {}:{}, passing and closing", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
-            hc.state_table.delete_state(ip_saddr, tcp_saddr, tcp_daddr);
+            debug!("Found Closing state for {}:{} -> {}:{}, passing", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
+            //hc.state_table.delete_state(ip_saddr, tcp_saddr, tcp_daddr);
             action = Action::Forward(*fwd_mac);
         },
         None => {
@@ -276,6 +276,7 @@ fn handle_tcp_fin(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
     ::RoutingTable::with_host_config_mut(ip_daddr, |hc| {
         if hc.state_table.get_state(ip_saddr, tcp_saddr, tcp_daddr).is_some() {
             action = Action::Forward(*fwd_mac);
+            debug!("FIN received, passing and closing");
             hc.state_table.set_state(ip_saddr, tcp_saddr, tcp_daddr, hc.tcp_timestamp, ConnState::Closing);
         }
     });
@@ -309,7 +310,7 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: &MacAddr, pkt: &mut IngressPacket) 
 
         Action::Forward(*fwd_mac)
     } else {
-        println!("Malformed TCP Packet");
+        debug!("Malformed TCP Packet");
         Action::Drop
     }
 }

@@ -130,7 +130,7 @@ impl fmt::Debug for StateTable {
             }
             write!(f, "{:?} -> {:?}\n", decode_key(entry.key()), decode_val(entry.value()));
         }
-        write!(f, "")
+        write!(f, "StateTable: {} entries\n", self.map.population())
     }
 }
 
@@ -383,14 +383,17 @@ fn state_table_gc() {
         for ip in ips {
             let mut entries = vec![];
             let mut timestamp = 0;
+            let mut hz = 300;
             ::RoutingTable::with_host_config(ip, |hc| {
                 entries = hc.state_table.map.entries();
                 timestamp = hc.tcp_timestamp;
+                hz = hc.hz;
             });
             for e in entries {
                 let k = e.key();
                 let (ts, cs) = decode_val(e.value());
-                if cs == ConnState::Closing && ts < timestamp - 120 {
+                println!("Curr. ts: {}, entry ts: {}", timestamp, ts);
+                if cs == ConnState::Closing && ts < timestamp - 120 * hz {
                     ::RoutingTable::with_host_config_mut(ip, |hc| {
                         let (ip, sport, dport) = decode_key(k);
                         println!("Deleting state for {:?} {} {}", ip, sport, dport);
