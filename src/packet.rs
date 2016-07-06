@@ -22,7 +22,7 @@ use ::ConnState;
 pub const MIN_REPLY_BUF_LEN: usize = 74;
 
 lazy_static! {
-    /// Some fields don't change ever so we just copy this template and then 
+    /// Some fields don't change ever so we just copy this template and then
     /// overwrite changed fields (see build_reply_with_template)
     static ref REPLY_TEMPLATE: [u8;MIN_REPLY_BUF_LEN] = {
         let mut data = [0;MIN_REPLY_BUF_LEN];
@@ -81,7 +81,7 @@ pub fn dump_input(packet_data: &[u8]) {
             let ipv4 = Ipv4Packet::new(eth.payload()).unwrap();
             println!("{:?}", ipv4);
             match ipv4.get_next_level_protocol() {
-                IpNextHeaderProtocols::Tcp  => { 
+                IpNextHeaderProtocols::Tcp  => {
                     let tcp = TcpPacket::new(ipv4.payload()).unwrap();
                     println!("{:?}", tcp);
                 },
@@ -234,11 +234,11 @@ fn handle_tcp_ack(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
             secret[0].copy_from_slice(&hc.syncookie_secret[0][0..17]);
             secret[1].copy_from_slice(&hc.syncookie_secret[1][0..17]);
 
-            let res = cookie::cookie_check(ip_saddr, ip_daddr, tcp_saddr, tcp_daddr, 
+            let res = cookie::cookie_check(ip_saddr, ip_daddr, tcp_saddr, tcp_daddr,
                                            seq, cookie, &secret, cookie_time);
             //println!("check result is {:?}", res);
             if res.is_some() {
-                hc.state_table.set_state(ip_saddr, tcp_saddr, tcp_daddr, ConnState::Established);
+                hc.state_table.set_state(ip_saddr, tcp_saddr, tcp_daddr, hc.tcp_timestamp, ConnState::Established);
                 action = Action::Forward(*fwd_mac);
             } else {
                 debug!("Bad cookie, drop");
@@ -276,7 +276,7 @@ fn handle_tcp_fin(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
     ::RoutingTable::with_host_config_mut(ip_daddr, |hc| {
         if hc.state_table.get_state(ip_saddr, tcp_saddr, tcp_daddr).is_some() {
             action = Action::Forward(*fwd_mac);
-            hc.state_table.set_state(ip_saddr, tcp_saddr, tcp_daddr, ConnState::Closing);
+            hc.state_table.set_state(ip_saddr, tcp_saddr, tcp_daddr, hc.tcp_timestamp, ConnState::Closing);
         }
     });
     action
@@ -295,17 +295,18 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: &MacAddr, pkt: &mut IngressPacket) 
             return handle_tcp_syn(tcp, fwd_mac, pkt);
         }
 
-        if flags & TcpFlags::ACK != 0 {
-            return handle_tcp_ack(tcp, fwd_mac, pkt);
+        if flags & TcpFlags::FIN != 0 {
+            return handle_tcp_fin(tcp, fwd_mac, pkt);
         }
 
         if flags & TcpFlags::RST != 0 {
             return handle_tcp_rst(tcp, fwd_mac, pkt);
         }
 
-        if flags & TcpFlags::FIN != 0 {
-            return handle_tcp_fin(tcp, fwd_mac, pkt);
+        if flags & TcpFlags::ACK != 0 {
+            return handle_tcp_ack(tcp, fwd_mac, pkt);
         }
+
         Action::Forward(*fwd_mac)
     } else {
         println!("Malformed TCP Packet");

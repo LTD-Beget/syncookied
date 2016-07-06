@@ -122,7 +122,7 @@ impl fmt::Debug for StateTable {
             (ip, src_port, dst_port)
         }
         fn decode_val(v: usize) -> ConnState {
-            ConnState::from(v - 1)
+            ConnState::from((v & 0xffffffff) - 1)
         }
         for entry in entries.iter() {
             if entry.key() == 0 || entry.value() == 0 {
@@ -134,7 +134,7 @@ impl fmt::Debug for StateTable {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug,Eq,PartialEq)]
 enum ConnState {
     Established, // first ACK received and valid
     Closing, // FIN received
@@ -159,20 +159,21 @@ impl StateTable {
         }
     }
 
-    pub fn set_state(&mut self, ip: Ipv4Addr, source_port: u16, dest_port: u16, state: ConnState) {
+    pub fn set_state(&mut self, ip: Ipv4Addr, source_port: u16, dest_port: u16, ts: u32, state: ConnState) {
         let int_ip = u32::from(ip) as usize;
         let key: usize = int_ip << 32
                          | (source_port as usize) << 16
                          | dest_port as usize;
-        self.map.insert(key, (state as usize) + 1);
+        let val: usize = (ts as usize) << 32 | ((state as usize) + 1);
+        self.map.insert(key, val);
     }
-    
+
     pub fn get_state(&self, ip: Ipv4Addr, source_port: u16, dest_port: u16) -> Option<ConnState> {
         let int_ip = u32::from(ip) as usize;
         let key: usize = int_ip << 32
                          | (source_port as usize) << 16
                          | dest_port as usize;
-        self.map.get(key).map(|val| ConnState::from(val - 1))
+        self.map.get(key).map(|val| ConnState::from((val & 0xffffffff) - 1))
     }
 
     pub fn delete_state(&mut self, ip: Ipv4Addr, source_port: u16, dest_port: u16) {
@@ -360,6 +361,50 @@ fn run_uptime_readers(reload_lock: Arc<(Mutex<bool>, Condvar)>, uptime_readers: 
     info!("All uptime readers dead");
 }
 
+fn state_table_gc() {
+    fn decode_val(val: usize) -> (u32, ConnState) {
+        let ts = (val >> 32) as u32;
+        let cs = ConnState::from((val & 0xffffffff) - 1);
+        (ts, cs)
+    }
+    fn decode_key(k: usize) -> (Ipv4Addr, u16, u16) {
+            let ip = Ipv4Addr::from((k >> 32) as u32);
+            let src_port = ((k & 0xffffffff) >> 16) as u16;
+            let dst_port = k as u16;
+            (ip, src_port, dst_port)
+    }
+    loop {
+        thread::sleep(Duration::new(10, 0));
+        ::RoutingTable::sync_tables();
+        println!("Dumping table states");
+        ::RoutingTable::dump_states();
+        println!("Starting GC");
+        let ips = ::RoutingTable::get_ips();
+        for ip in ips {
+            let mut entries = vec![];
+            let mut timestamp = 0;
+            ::RoutingTable::with_host_config(ip, |hc| {
+                entries = hc.state_table.map.entries();
+                timestamp = hc.tcp_timestamp;
+            });
+            for e in entries {
+                let k = e.key();
+                let (ts, cs) = decode_val(e.value());
+                if cs == ConnState::Closing && ts < timestamp - 120 {
+                    ::RoutingTable::with_host_config_mut(ip, |hc| {
+                        let (ip, sport, dport) = decode_key(k);
+                        println!("Deleting state for {:?} {} {}", ip, sport, dport);
+                        hc.state_table.delete_state(ip, sport, dport);
+                    });
+                }
+            }
+        }
+        println!("Dumping table states");
+        ::RoutingTable::dump_states();
+        println!("End of GC");
+    }
+}
+
 fn handle_signals(path: PathBuf, reload_lock: Arc<(Mutex<bool>, Condvar)>) {
     let signal = chan_signal::notify(&[Signal::HUP, Signal::INT, Signal::USR1]);
     thread::spawn(move || loop {
@@ -435,8 +480,10 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
         let reload_lock = Arc::new((Mutex::new(false), Condvar::new()));
         handle_signals(config, reload_lock.clone());
 
-        scope.spawn(move || 
+        scope.spawn(move ||
                     run_uptime_readers(reload_lock.clone(), uptime_readers));
+
+        scope.spawn(move || state_table_gc());
 
         // we spawn a thread per RX/TX queue
         for ring in 0..rx_count {
@@ -503,7 +550,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
                     let nm = tx_nm.lock();
                     nm.clone_ring(ring, Direction::Output).unwrap()
                 };
-                /* We assume that in multi_if configuration 
+                /* We assume that in multi_if configuration
                  *  - RX queues are bound to [first_cpu .. first_cpu + rx_count]
                  *  - TX queues are bound to [ first_cpu + rx_count .. first_cpu + rx_count + tx_count ]
                  */
@@ -606,7 +653,7 @@ fn main() {
                                .get_matches();
 
     if let Some(matches) = matches.subcommand_matches("server") {
-        let addr = matches.value_of("addr").unwrap_or("127.0.0.1:1488"); 
+        let addr = matches.value_of("addr").unwrap_or("127.0.0.1:1488");
         uptime::run_server(addr);
     } else {
         println!("Hostname: {}", util::get_host_name().unwrap());
