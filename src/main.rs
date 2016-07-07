@@ -339,11 +339,11 @@ fn state_table_gc() {
             (ip, src_port, dst_port)
     }
     loop {
-        thread::sleep(Duration::new(10, 0));
+        thread::sleep(Duration::new(30, 0));
         ::RoutingTable::sync_tables();
-        println!("Dumping table states");
+        debug!("Dumping table states");
         ::RoutingTable::dump_states();
-        println!("Starting GC");
+        debug!("Starting GC");
         let ips = ::RoutingTable::get_ips();
         for ip in ips {
             let mut entries = vec![];
@@ -357,19 +357,19 @@ fn state_table_gc() {
             for e in entries {
                 let k = e.0;
                 let (ts, cs) = decode_val(e.1);
-                println!("Curr. ts: {}, entry ts: {}", timestamp, ts);
+                debug!("Curr. ts: {}, entry ts: {}", timestamp, ts);
                 if cs == ConnState::Closing && ts < timestamp - 120 * hz {
                     ::RoutingTable::with_host_config_mut(ip, |hc| {
                         let (ip, sport, dport) = decode_key(k);
-                        println!("Deleting state for {:?} {} {}", ip, sport, dport);
+                        debug!("Deleting state for {:?} {} {}", ip, sport, dport);
                         hc.state_table.delete_state(ip, sport, dport);
                     });
                 }
             }
         }
-        println!("Dumping table states");
+        debug!("Dumping table states");
         ::RoutingTable::dump_states();
-        println!("End of GC");
+        debug!("End of GC");
     }
 }
 
