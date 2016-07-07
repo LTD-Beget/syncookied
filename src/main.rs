@@ -118,12 +118,12 @@ impl From<usize> for ConnState {
     }
 }
 
-// TODO: implement removal in LocklessIntMap
-// note: currently unused
 impl StateTable {
     fn new(size: usize) -> Self {
         StateTable {
-            map: ConcurrentHashMap::new_with_options(size as u32, 1024, 0.8, BuildHasherDefault::<fnv::FnvHasher>::default()),
+            map: ConcurrentHashMap::new_with_options(size as u32,
+                 1024, 0.8,
+                 BuildHasherDefault::<fnv::FnvHasher>::default()),
         }
     }
 
@@ -136,12 +136,12 @@ impl StateTable {
         self.map.insert(key, val);
     }
 
-    pub fn get_state(&self, ip: Ipv4Addr, source_port: u16, dest_port: u16) -> Option<ConnState> {
+    pub fn get_state(&self, ip: Ipv4Addr, source_port: u16, dest_port: u16) -> Option<(u32,ConnState)> {
         let int_ip = u32::from(ip) as usize;
         let key: usize = int_ip << 32
                          | (source_port as usize) << 16
                          | dest_port as usize;
-        self.map.get(key).map(|val| ConnState::from((val & 0xffffffff) - 1))
+        self.map.get(key).map(|val| ((val >> 32) as u32, ConnState::from((val & 0xffffffff) - 1)))
     }
 
     pub fn delete_state(&mut self, ip: Ipv4Addr, source_port: u16, dest_port: u16) {
@@ -357,10 +357,13 @@ fn run_uptime_readers(reload_lock: Arc<(Mutex<bool>, Condvar)>, uptime_readers: 
 }
 
 fn state_table_gc() {
-    fn decode_val(val: usize) -> (u32, ConnState) {
+    const CLOSING_TIMEOUT: u32 = 120;
+    const ESTABLISHED_TIMEOUT: u32 = 600;
+
+    fn decode_val(val: usize) -> (ConnState, u32) {
         let ts = (val >> 32) as u32;
         let cs = ConnState::from((val & 0xffffffff) - 1);
-        (ts, cs)
+        (cs, ts)
     }
     fn decode_key(k: usize) -> (Ipv4Addr, u16, u16) {
             let ip = Ipv4Addr::from((k >> 32) as u32);
@@ -386,14 +389,23 @@ fn state_table_gc() {
             });
             for e in entries {
                 let k = e.0;
-                let (ts, cs) = decode_val(e.1);
+                let (cs, ts) = decode_val(e.1);
                 debug!("Curr. ts: {}, entry ts: {}", timestamp, ts);
-                if cs == ConnState::Closing && ts < timestamp - 120 * hz {
-                    ::RoutingTable::with_host_config_mut(ip, |hc| {
-                        let (ip, sport, dport) = decode_key(k);
-                        debug!("Deleting state for {:?} {} {}", ip, sport, dport);
-                        hc.state_table.delete_state(ip, sport, dport);
-                    });
+                match (cs, ts) {
+                    (ConnState::Closing, ts) => if ts < timestamp - CLOSING_TIMEOUT * hz {
+                        ::RoutingTable::with_host_config_mut(ip, |hc| {
+                            let (ip, sport, dport) = decode_key(k);
+                            debug!("Deleting state for {:?} {} {}", ip, sport, dport);
+                            hc.state_table.delete_state(ip, sport, dport);
+                        });
+                    },
+                    (ConnState::Established, ts) => if ts < timestamp - ESTABLISHED_TIMEOUT * hz {
+                        ::RoutingTable::with_host_config_mut(ip, |hc| {
+                            let (ip, sport, dport) = decode_key(k);
+                            debug!("Deleting state for {:?} {} {}", ip, sport, dport);
+                            hc.state_table.delete_state(ip, sport, dport);
+                        });
+                    },
                 }
             }
         }

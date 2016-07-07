@@ -189,11 +189,15 @@ fn handle_tcp_ack(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
 
     ::RoutingTable::with_host_config_mut(ip_daddr, |hc| {
         match hc.state_table.get_state(ip_saddr, tcp_saddr, tcp_daddr) {
-        Some(ConnState::Established) => {
+        Some((ts, ConnState::Established)) => {
             debug!("Found established state for {}:{} -> {}:{}, passing", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
+            if ts < hc.tcp_timestamp - 30 * hc.hz {
+                /* update connection timestamp */
+                hc.state_table.set_state(ip_saddr, tcp_saddr, tcp_daddr, hc.tcp_timestamp, ConnState::Established);
+            }
             action = Action::Forward(*fwd_mac);
         },
-        Some(ConnState::Closing) => {
+        Some((_, ConnState::Closing)) => {
             debug!("Found Closing state for {}:{} -> {}:{}, passing", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
             //hc.state_table.delete_state(ip_saddr, tcp_saddr, tcp_daddr);
             action = Action::Forward(*fwd_mac);
