@@ -23,7 +23,7 @@ impl<'a> Client<'a> {
     pub fn send(&self, metrics: &[Metric]) {
         use influent::client::Client;
         use std::mem;
-        self.inner.write_many(unsafe { mem::transmute(metrics) }, None);
+        let _ = self.inner.write_many(unsafe { mem::transmute(metrics) }, None);
     }
 }
 
@@ -32,13 +32,6 @@ pub struct Metric<'a> {
 }
 
 impl<'a> Metric<'a> {
-    pub fn new(name: &'a str, val: i64) -> Metric<'a> {
-        let mut m = Measurement::new(name);
-
-        m.add_field("value", Value::Integer(val));
-        Metric { inner: m }
-    }
-
     pub fn new_with_tags(name: &'a str, tags: &'a [(&'a str, &'a str)]) -> Metric<'a> {
         let mut m = Measurement::new(name);
 

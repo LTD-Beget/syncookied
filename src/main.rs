@@ -83,7 +83,7 @@ struct StateTable {
 impl fmt::Debug for StateTable {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if self.map.len() == 0 {
-            write!(f, "StateTable empty\n");
+            try!(write!(f, "StateTable empty\n"));
         }
         let entries = self.map.entries();
         fn decode_key(k: usize) -> (Ipv4Addr, u16, u16) {
@@ -96,7 +96,7 @@ impl fmt::Debug for StateTable {
             ConnState::from((v & 0xffffffff) - 1)
         }
         for entry in entries.iter() {
-            write!(f, "{:?} -> {:?}\n", decode_key(entry.0), decode_val(entry.1));
+            try!(write!(f, "{:?} -> {:?}\n", decode_key(entry.0), decode_val(entry.1)));
         }
         write!(f, "StateTable: {} entries\n", self.map.len())
     }
@@ -552,7 +552,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
 
 fn main() {
     let matches = App::new("syncookied")
-                              .version("0.1.9")
+                              .version("0.2.0")
                               .author("Alexander Polyakov <apolyakov@beget.ru>")
                               .setting(AppSettings::SubcommandsNegateReqs)
                               .subcommand(
