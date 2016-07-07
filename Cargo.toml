@@ -65,10 +65,6 @@ git = "https://github.com/polachok/libpnet"
 rev = "8eeb66788c2cd71228b15a80e8ae894ed56b4510"
 branch = "syncookied"
 
-[dependencies.intmap]
-git = "https://github.com/polachok/intmap"
-rev = "57eb64370d0400ceafce1d6c154375ff1cda83d1"
-
 [build-dependencies]
 gcc = "0.3.26"
 

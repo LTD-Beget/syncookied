@@ -11,7 +11,6 @@ extern crate scheduler;
 extern crate clap;
 extern crate yaml_rust;
 extern crate parking_lot;
-extern crate intmap;
 extern crate fnv;
 extern crate bounded_spsc_queue as spsc;
 extern crate chan_signal;
@@ -32,7 +31,6 @@ use std::net::Ipv4Addr;
 use std::str::FromStr;
 use pnet::util::MacAddr;
 use parking_lot::{RwLock,Mutex,Condvar};
-use intmap::LocklessIntMap;
 use concurrent_hash_map::ConcurrentHashMap;
 
 use std::collections::BTreeMap;
@@ -76,35 +74,6 @@ thread_local!(pub static LOCAL_ROUTING_TABLE: RefCell<BTreeMap<Ipv4Addr, HostCon
     let hm = BTreeMap::new();
     RefCell::new(hm)
 });
-
-#[derive(Clone)]
-struct RecentSentTable {
-    map: LocklessIntMap<BuildHasherDefault<fnv::FnvHasher>>,
-}
-
-impl fmt::Debug for RecentSentTable {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "RecentSentTable")
-    }
-}
-
-impl RecentSentTable {
-    fn new() -> Self {
-        RecentSentTable {
-            map: LocklessIntMap::new(65536 /* number of ports */, BuildHasherDefault::<fnv::FnvHasher>::default())
-        }
-    }
-
-    pub fn touch(&mut self, dest_port: u16, timestamp: usize) {
-        let key: usize = dest_port as usize;
-        self.map.insert(key, timestamp);
-    }
-
-    pub fn get_last_touched(&self, dest_port: u16) -> Option<usize> {
-        let key: usize = dest_port as usize;
-        self.map.get(key)
-    }
-}
 
 #[derive(Clone)]
 struct StateTable {
@@ -281,7 +250,6 @@ pub struct HostConfiguration {
     hz: u32,
     syncookie_secret: [[u32;17];2],
     state_table: StateTable,
-    recent_table: RecentSentTable,
     filters: Arc<Vec<(BpfJitFilter,filter::FilterAction)>>,
     default: filter::FilterAction,
 }
@@ -295,7 +263,6 @@ impl HostConfiguration {
             hz: 300,
             syncookie_secret: [[0;17];2],
             state_table: StateTable::new(1024 * 1024),
-            recent_table: RecentSentTable::new(),
             filters: Arc::new(filters),
             default: default,
         }
@@ -311,7 +278,6 @@ impl Clone for HostConfiguration {
             hz: self.hz,
             syncookie_secret: self.syncookie_secret.clone(),
             state_table: self.state_table.clone(),
-            recent_table: self.recent_table.clone(),
             filters: self.filters.clone(),
             default: self.default,
         }

@@ -82,7 +82,7 @@ fn check_tcp_syn_cookie(cookie: u32, saddr: u32, daddr: u32,
                         sport: u16, dport: u16, sseq: u32,
                         secret: &[[u32;17];2], cookie_time: u32) -> u32 {
     let diff: Wrapping<u32>;
-    let mut count: Wrapping<u32> = Wrapping(cookie_time);
+    let count: Wrapping<u32> = Wrapping(cookie_time);
     let mut cookie = Wrapping(cookie);
     /* Strip away the layers from the cookie */
     cookie -= Wrapping(cookie_hash(saddr, daddr, sport, dport, 0, &secret[0])) + Wrapping(sseq);

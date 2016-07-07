@@ -162,39 +162,11 @@ fn handle_transport_protocol(protocol: IpNextHeaderProtocol, packet: &[u8],
 }
 
 #[inline]
-fn handle_tcp_syn(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) -> Action {
+fn handle_tcp_syn(tcp: TcpPacket, pkt: &mut IngressPacket) -> Action {
     //println!("TCP Packet: {:?}", tcp);
-    let ip_daddr = pkt.ipv4_destination;
-    let mut need_forward = false;
-
     pkt.tcp_source = tcp.get_source();
     pkt.tcp_destination = tcp.get_destination();
     pkt.tcp_sequence = tcp.get_sequence();
-    /* we need to touch destination server listening socket from
-     * time to time to avoid getting into tcp_synq_no_recent_overflow()
-     * so here we keep track of how much time passed since SYN
-     * was sent and send one if it is > 1sec
-     */
-/*
-    ::RoutingTable::with_host_config(ip_daddr, |hc| {
-        match hc.recent_table.get_last_touched(pkt.tcp_destination) {
-            Some(val) => {
-                let diff = hc.tcp_timestamp as u32 - val as u32;
-                if diff > 30 * hc.hz {
-                    need_forward = true;
-                    debug!("Touch port {} (val: {} ts: {} diff: {}, hz: {})", pkt.tcp_destination, hc.tcp_timestamp as u32, val as u32, diff, hc.hz);
-                }
-            },
-            None => need_forward = true,
-        }
-    });
-    if need_forward {
-        ::RoutingTable::with_host_config_mut(ip_daddr, |hc| {
-            hc.recent_table.touch(pkt.tcp_destination, hc.tcp_timestamp as usize);
-        });
-        return Action::Forward(*fwd_mac);
-    }
-*/
     let in_options = tcp.get_options_iter();
     if let Some(ts_option) = in_options.filter(|opt| (*opt).get_number() == TcpOptionNumbers::TIMESTAMPS).nth(0) {
         pkt.tcp_timestamp[0..4].copy_from_slice(&ts_option.payload()[0..4]);
@@ -286,7 +258,6 @@ fn handle_tcp_fin(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
 
 #[inline]
 fn handle_tcp_packet(packet: &[u8], fwd_mac: &MacAddr, pkt: &mut IngressPacket) -> Action {
-    use std::ptr;
     let tcp = TcpPacket::new(packet);
     if let Some(tcp) = tcp {
         //println!("TCP Packet: {}:{} > {}:{}; length: {}", source,
@@ -294,7 +265,7 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: &MacAddr, pkt: &mut IngressPacket) 
         let flags = tcp.get_flags();
 
         if flags & (TcpFlags::SYN | TcpFlags::ACK) == TcpFlags::SYN {
-            return handle_tcp_syn(tcp, fwd_mac, pkt);
+            return handle_tcp_syn(tcp, pkt);
         }
 
         if flags & TcpFlags::FIN != 0 {
