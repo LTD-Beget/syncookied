@@ -177,11 +177,30 @@ impl RoutingTable {
 
     pub fn sync_tables() {
         LOCAL_ROUTING_TABLE.with(|rt| {
+            use std::collections::btree_map::Entry;
             let ips = ::RoutingTable::get_ips();
             let mut cache = rt.borrow_mut();
-            cache.clear();
+
+            // merge configurations
             for ip in ips.iter() {
-                ::RoutingTable::with_host_config_global(*ip, |hc| { cache.insert(*ip, hc.to_owned()); });
+                ::RoutingTable::with_host_config_global(*ip, |hc| {
+                    match cache.entry(*ip) {
+                        Entry::Vacant(ve) => {
+                            ve.insert(hc.to_owned());
+                        },
+                        Entry::Occupied(mut oe) => {
+                            let oe = oe.get_mut();
+                            oe.merge(hc)
+                        },
+                    }
+                  });
+            }
+            // remove extra keys
+            let ips: Vec<Ipv4Addr> = cache.keys().cloned().collect();
+            for ip in ips.iter() {
+                if ::RoutingTable::with_host_config_global(*ip, |_| {}).is_none() {
+                    cache.remove(ip);
+                }
             }
         })
     }
@@ -266,6 +285,17 @@ impl HostConfiguration {
             filters: Arc::new(filters),
             default: default,
         }
+    }
+
+    fn merge(&mut self, other: &HostConfiguration) {
+        self.mac = other.mac;
+        self.tcp_timestamp = other.tcp_timestamp;
+        self.tcp_cookie_time = other.tcp_cookie_time;
+        self.hz = other.hz;
+        self.syncookie_secret = other.syncookie_secret;
+        self.filters = other.filters.clone();
+        self.default = other.default;
+        // skip copying state_table
     }
 }
 
