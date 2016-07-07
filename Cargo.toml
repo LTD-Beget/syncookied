@@ -1,6 +1,6 @@
 [package]
 name = "syncookied"
-version = "0.1.9"
+version = "0.2.0"
 description = "syn flood protection system"
 authors = ["Alexander Polyakov <apolyakov@beget.ru>"]
 build = "build.rs"
@@ -19,6 +19,11 @@ chan-signal = "0.1.6"
 log = "0.3.6"
 syslog = "3.1.0"
 chrono = "0.2.22"
+
+[dependencies.concurrent-hash-map]
+git = "https://github.com/polachok/concurrent-hash-map"
+branch = "hasher"
+rev = "7a36b53b7d19755a34bf27d0ff6cde68d1e9af1d"
 
 [dependencies.influent]
 git = "https://github.com/polachok/influent.rs"
@@ -59,10 +64,6 @@ features = [ "netmap_with_libs" ]
 git = "https://github.com/polachok/libpnet"
 rev = "8eeb66788c2cd71228b15a80e8ae894ed56b4510"
 branch = "syncookied"
-
-[dependencies.intmap]
-git = "https://github.com/polachok/intmap"
-rev = "37c7289c1ecb7af4d28b66b041c81079f9dbdc3e"
 
 [build-dependencies]
 gcc = "0.3.26"

@@ -11,7 +11,6 @@ extern crate scheduler;
 extern crate clap;
 extern crate yaml_rust;
 extern crate parking_lot;
-extern crate intmap;
 extern crate fnv;
 extern crate bounded_spsc_queue as spsc;
 extern crate chan_signal;
@@ -19,6 +18,7 @@ extern crate pcap;
 extern crate bpfjit;
 extern crate chrono;
 extern crate influent;
+extern crate concurrent_hash_map;
 
 use std::fmt;
 use std::cell::RefCell;
@@ -31,7 +31,7 @@ use std::net::Ipv4Addr;
 use std::str::FromStr;
 use pnet::util::MacAddr;
 use parking_lot::{RwLock,Mutex,Condvar};
-use intmap::LocklessIntMap;
+use concurrent_hash_map::ConcurrentHashMap;
 
 use std::collections::BTreeMap;
 use std::hash::BuildHasherDefault;
@@ -76,43 +76,45 @@ thread_local!(pub static LOCAL_ROUTING_TABLE: RefCell<BTreeMap<Ipv4Addr, HostCon
 });
 
 #[derive(Clone)]
-struct RecentSentTable {
-    map: LocklessIntMap<BuildHasherDefault<fnv::FnvHasher>>,
-}
-
-impl fmt::Debug for RecentSentTable {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "RecentSentTable")
-    }
-}
-
-impl RecentSentTable {
-    fn new() -> Self {
-        RecentSentTable {
-            map: LocklessIntMap::new(65536 /* number of ports */, BuildHasherDefault::<fnv::FnvHasher>::default())
-        }
-    }
-
-    pub fn touch(&mut self, dest_port: u16, timestamp: usize) {
-        let key: usize = dest_port as usize;
-        self.map.insert(key, timestamp);
-    }
-
-    pub fn get_last_touched(&self, dest_port: u16) -> Option<usize> {
-        let key: usize = dest_port as usize;
-        self.map.get(key)
-    }
-}
-
-/*
-#[derive(Clone)]
 struct StateTable {
-    map: LocklessIntMap<BuildHasherDefault<fnv::FnvHasher>>,
+    map: ConcurrentHashMap<usize,usize, BuildHasherDefault<fnv::FnvHasher>>,
 }
 
 impl fmt::Debug for StateTable {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "StateTable")
+        if self.map.len() == 0 {
+            try!(write!(f, "StateTable empty\n"));
+        }
+        let entries = self.map.entries();
+        fn decode_key(k: usize) -> (Ipv4Addr, u16, u16) {
+            let ip = Ipv4Addr::from((k >> 32) as u32);
+            let src_port = ((k & 0xffffffff) >> 16) as u16;
+            let dst_port = k as u16;
+            (ip, src_port, dst_port)
+        }
+        fn decode_val(v: usize) -> ConnState {
+            ConnState::from((v & 0xffffffff) - 1)
+        }
+        for entry in entries.iter() {
+            try!(write!(f, "{:?} -> {:?}\n", decode_key(entry.0), decode_val(entry.1)));
+        }
+        write!(f, "StateTable: {} entries\n", self.map.len())
+    }
+}
+
+#[derive(Debug,Eq,PartialEq)]
+enum ConnState {
+    Established, // first ACK received and valid
+    Closing, // FIN received
+}
+
+impl From<usize> for ConnState {
+    fn from(x: usize) -> Self {
+        match x {
+            0 => ConnState::Established,
+            1 => ConnState::Closing,
+            x => panic!("invalid connection state {}", x),
+        }
     }
 }
 
@@ -121,27 +123,35 @@ impl fmt::Debug for StateTable {
 impl StateTable {
     fn new(size: usize) -> Self {
         StateTable {
-            map: LocklessIntMap::new(size, BuildHasherDefault::<fnv::FnvHasher>::default())
+            map: ConcurrentHashMap::new_with_options(size as u32, 1024, 0.8, BuildHasherDefault::<fnv::FnvHasher>::default()),
         }
     }
 
-    pub fn add_state(&mut self, ip: Ipv4Addr, source_port: u16, dest_port: u16, state: usize) {
+    pub fn set_state(&mut self, ip: Ipv4Addr, source_port: u16, dest_port: u16, ts: u32, state: ConnState) {
         let int_ip = u32::from(ip) as usize;
         let key: usize = int_ip << 32
                          | (source_port as usize) << 16
                          | dest_port as usize;
-        self.map.insert(key, state);
+        let val: usize = (ts as usize) << 32 | ((state as usize) + 1);
+        self.map.insert(key, val);
     }
-    
-    pub fn get_state(&self, ip: Ipv4Addr, source_port: u16, dest_port: u16) -> Option<usize> {
+
+    pub fn get_state(&self, ip: Ipv4Addr, source_port: u16, dest_port: u16) -> Option<ConnState> {
         let int_ip = u32::from(ip) as usize;
         let key: usize = int_ip << 32
                          | (source_port as usize) << 16
                          | dest_port as usize;
-        self.map.get(key)
+        self.map.get(key).map(|val| ConnState::from((val & 0xffffffff) - 1))
+    }
+
+    pub fn delete_state(&mut self, ip: Ipv4Addr, source_port: u16, dest_port: u16) {
+        let int_ip = u32::from(ip) as usize;
+        let key: usize = int_ip << 32
+                         | (source_port as usize) << 16
+                         | dest_port as usize;
+        self.map.remove(key);
     }
 }
-*/
 
 // TODO: rename to sth. more appropriate (FibTable, ConfigTable?)
 pub struct RoutingTable;
@@ -174,6 +184,18 @@ impl RoutingTable {
                 ::RoutingTable::with_host_config_global(*ip, |hc| { cache.insert(*ip, hc.to_owned()); });
             }
         })
+    }
+
+    pub fn dump_states() {
+        let ips = Self::get_ips();
+        LOCAL_ROUTING_TABLE.with(|rt| {
+            for ip in ips {
+                let r = rt.borrow();
+                if let Some(ref hc) = r.get(&ip) {
+                    println!("[{}] {:?}", ip, hc.state_table);
+                }
+            }
+        });
     }
 
     pub fn with_host_config<F>(ip: Ipv4Addr, mut f: F) -> Option<()> where F: FnMut(&HostConfiguration) {
@@ -227,10 +249,7 @@ pub struct HostConfiguration {
     tcp_cookie_time: u32,
     hz: u32,
     syncookie_secret: [[u32;17];2],
-    /*
     state_table: StateTable,
-    */
-    recent_table: RecentSentTable,
     filters: Arc<Vec<(BpfJitFilter,filter::FilterAction)>>,
     default: filter::FilterAction,
 }
@@ -243,10 +262,7 @@ impl HostConfiguration {
             tcp_cookie_time: 0,
             hz: 300,
             syncookie_secret: [[0;17];2],
-            /*
             state_table: StateTable::new(1024 * 1024),
-            */
-            recent_table: RecentSentTable::new(),
             filters: Arc::new(filters),
             default: default,
         }
@@ -261,10 +277,7 @@ impl Clone for HostConfiguration {
             tcp_cookie_time: self.tcp_cookie_time,
             hz: self.hz,
             syncookie_secret: self.syncookie_secret.clone(),
-            /*
             state_table: self.state_table.clone(),
-            */
-            recent_table: self.recent_table.clone(),
             filters: self.filters.clone(),
             default: self.default,
         }
@@ -313,8 +326,55 @@ fn run_uptime_readers(reload_lock: Arc<(Mutex<bool>, Condvar)>, uptime_readers: 
     info!("All uptime readers dead");
 }
 
+fn state_table_gc() {
+    fn decode_val(val: usize) -> (u32, ConnState) {
+        let ts = (val >> 32) as u32;
+        let cs = ConnState::from((val & 0xffffffff) - 1);
+        (ts, cs)
+    }
+    fn decode_key(k: usize) -> (Ipv4Addr, u16, u16) {
+            let ip = Ipv4Addr::from((k >> 32) as u32);
+            let src_port = ((k & 0xffffffff) >> 16) as u16;
+            let dst_port = k as u16;
+            (ip, src_port, dst_port)
+    }
+    loop {
+        thread::sleep(Duration::new(30, 0));
+        ::RoutingTable::sync_tables();
+        debug!("Dumping table states");
+        ::RoutingTable::dump_states();
+        debug!("Starting GC");
+        let ips = ::RoutingTable::get_ips();
+        for ip in ips {
+            let mut entries = vec![];
+            let mut timestamp = 0;
+            let mut hz = 300;
+            ::RoutingTable::with_host_config(ip, |hc| {
+                entries = hc.state_table.map.entries();
+                timestamp = hc.tcp_timestamp;
+                hz = hc.hz;
+            });
+            for e in entries {
+                let k = e.0;
+                let (ts, cs) = decode_val(e.1);
+                debug!("Curr. ts: {}, entry ts: {}", timestamp, ts);
+                if cs == ConnState::Closing && ts < timestamp - 120 * hz {
+                    ::RoutingTable::with_host_config_mut(ip, |hc| {
+                        let (ip, sport, dport) = decode_key(k);
+                        debug!("Deleting state for {:?} {} {}", ip, sport, dport);
+                        hc.state_table.delete_state(ip, sport, dport);
+                    });
+                }
+            }
+        }
+        debug!("Dumping table states");
+        ::RoutingTable::dump_states();
+        debug!("End of GC");
+    }
+}
+
 fn handle_signals(path: PathBuf, reload_lock: Arc<(Mutex<bool>, Condvar)>) {
-    let signal = chan_signal::notify(&[Signal::HUP, Signal::INT]);
+    let signal = chan_signal::notify(&[Signal::HUP, Signal::INT, Signal::USR1]);
     thread::spawn(move || loop {
         ::util::set_thread_name("syncookied/sig");
         match signal.recv().unwrap() {
@@ -340,6 +400,10 @@ fn handle_signals(path: PathBuf, reload_lock: Arc<(Mutex<bool>, Condvar)>) {
                     },
                     Err(e) => error!("Error parsing config file {}: {:?}", path.display(), e),
                 }
+            },
+            Signal::USR1 => {
+                ::RoutingTable::sync_tables();
+                ::RoutingTable::dump_states();
             },
             Signal::INT => {
                 use std::process;
@@ -384,8 +448,10 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
         let reload_lock = Arc::new((Mutex::new(false), Condvar::new()));
         handle_signals(config, reload_lock.clone());
 
-        scope.spawn(move || 
+        scope.spawn(move ||
                     run_uptime_readers(reload_lock.clone(), uptime_readers));
+
+        scope.spawn(move || state_table_gc());
 
         // we spawn a thread per RX/TX queue
         for ring in 0..rx_count {
@@ -452,7 +518,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
                     let nm = tx_nm.lock();
                     nm.clone_ring(ring, Direction::Output).unwrap()
                 };
-                /* We assume that in multi_if configuration 
+                /* We assume that in multi_if configuration
                  *  - RX queues are bound to [first_cpu .. first_cpu + rx_count]
                  *  - TX queues are bound to [ first_cpu + rx_count .. first_cpu + rx_count + tx_count ]
                  */
@@ -486,7 +552,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
 
 fn main() {
     let matches = App::new("syncookied")
-                              .version("0.1.9")
+                              .version("0.2.0")
                               .author("Alexander Polyakov <apolyakov@beget.ru>")
                               .setting(AppSettings::SubcommandsNegateReqs)
                               .subcommand(
@@ -555,7 +621,7 @@ fn main() {
                                .get_matches();
 
     if let Some(matches) = matches.subcommand_matches("server") {
-        let addr = matches.value_of("addr").unwrap_or("127.0.0.1:1488"); 
+        let addr = matches.value_of("addr").unwrap_or("127.0.0.1:1488");
         uptime::run_server(addr);
     } else {
         println!("Hostname: {}", util::get_host_name().unwrap());
