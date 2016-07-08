@@ -1,6 +1,6 @@
 [package]
 name = "syncookied"
-version = "0.2.0"
+version = "0.2.1"
 description = "syn flood protection system"
 authors = ["Alexander Polyakov <apolyakov@beget.ru>"]
 build = "build.rs"
