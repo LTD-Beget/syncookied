@@ -156,12 +156,14 @@ impl StateTable {
 pub struct RoutingTable;
 
 impl RoutingTable {
-    fn add_host(ip: Ipv4Addr, mac: MacAddr, default_policy: filter::FilterAction, filters: Vec<(BpfJitFilter,filter::FilterAction)>) {
-        info!("Configuration: {} -> {} Filters: {} Default policy: {:?}", ip, mac, filters.len(), default_policy);
-        let host_conf = HostConfiguration::new(mac, filters, default_policy);
+    fn add_host(config: &config::HostConfig) {
+        info!("Configuration: {} -> {} Filters: {} Default policy: {:?} pt: {}",
+                 config.ip, config.mac, config.filters.len(),
+                 config.default_policy, config.passthrough);
+        let host_conf = HostConfiguration::new(config.mac, config.filters.clone(), config.default_policy, config.passthrough);
         let mut w = GLOBAL_HOST_CONFIGURATION.write();
 
-        w.insert(ip, host_conf);
+        w.insert(config.ip, host_conf);
     }
 
     fn clear() {
@@ -270,10 +272,11 @@ pub struct HostConfiguration {
     state_table: StateTable,
     filters: Arc<Vec<(BpfJitFilter,filter::FilterAction)>>,
     default: filter::FilterAction,
+    passthrough: bool,
 }
 
 impl HostConfiguration {
-    fn new(mac: MacAddr, filters: Vec<(BpfJitFilter,filter::FilterAction)>, default: filter::FilterAction) -> Self {
+    fn new(mac: MacAddr, filters: Vec<(BpfJitFilter,filter::FilterAction)>, default: filter::FilterAction, pt: bool) -> Self {
         HostConfiguration {
             mac: mac,
             tcp_timestamp: 0,
@@ -283,6 +286,7 @@ impl HostConfiguration {
             state_table: StateTable::new(1024 * 1024),
             filters: Arc::new(filters),
             default: default,
+            passthrough: pt,
         }
     }
 
@@ -294,6 +298,7 @@ impl HostConfiguration {
         self.syncookie_secret = other.syncookie_secret;
         self.filters = other.filters.clone();
         self.default = other.default;
+        self.passthrough = other.passthrough;
         // skip copying state_table
     }
 }
@@ -309,6 +314,7 @@ impl Clone for HostConfiguration {
             state_table: self.state_table.clone(),
             filters: self.filters.clone(),
             default: self.default,
+            passthrough: self.passthrough,
         }
     }
 }
