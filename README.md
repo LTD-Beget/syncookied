@@ -33,7 +33,7 @@ On server you want to use for packet processing
    ./set_irq_affinity -x 0-11 eth2
    ```
 
-set_irq_affinity is available at https://github.com/majek/ixgbe/blob/master/scripts/set_irq_affinity
+    set_irq_affinity is available at https://github.com/majek/ixgbe/blob/master/scripts/set_irq_affinity
 
 4. Create hosts.yml file in the working directory, which looks like this
    ```
