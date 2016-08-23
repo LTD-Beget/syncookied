@@ -19,6 +19,7 @@ chan-signal = "0.1.6"
 log = "0.3.6"
 syslog = "3.1.0"
 chrono = "0.2.22"
+scheduler = "0.1.1"
 
 [dependencies.concurrent-hash-map]
 git = "https://github.com/polachok/concurrent-hash-map"
@@ -41,10 +42,10 @@ git = "https://github.com/polachok/pcap"
 rev = "f5bff0b0b18b7054ea3e84db00ccf4787dc5bb4c"
 branch = "offline-bpf"
 
-[dependencies.scheduler]
-git = "https://github.com/polachok/rust-scheduler"
-rev = "53b832905bf61ab8e8513e1fd9341a65d850ef27"
-branch = "newer-libc"
+#[dependencies.scheduler]
+#git = "https://github.com/polachok/rust-scheduler"
+#rev = "53b832905bf61ab8e8513e1fd9341a65d850ef27"
+#branch = "newer-libc"
 
 [dependencies.bounded-spsc-queue]
 git = "https://github.com/polachok/bounded-spsc-queue.git"

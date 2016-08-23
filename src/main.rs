@@ -37,7 +37,6 @@ use std::collections::BTreeMap;
 use std::hash::BuildHasherDefault;
 
 use clap::{Arg, App, AppSettings, SubCommand};
-use chan_signal::Signal;
 
 use bpfjit::BpfJitFilter;
 
@@ -416,6 +415,7 @@ fn state_table_gc() {
 }
 
 fn handle_signals(path: PathBuf, reload_lock: Arc<(Mutex<bool>, Condvar)>) {
+    use chan_signal::Signal;
     let signal = chan_signal::notify(&[Signal::HUP, Signal::INT, Signal::USR1]);
     thread::spawn(move || loop {
         ::util::set_thread_name("syncookied/sig");

@@ -29,7 +29,7 @@ pub struct UdpReader {
 impl UdpReader {
     pub fn new(addr: SocketAddr) -> Self {
         UdpReader {
-            addr: addr 
+            addr: addr
         }
     }
 }
@@ -113,19 +113,42 @@ pub fn update(ip: Ipv4Addr, buf: Vec<u8>) {
 
 /// main function in "server" mode
 pub fn run_server(addr: &str) {
+    use ::chan_signal::Signal;
     use std::net::UdpSocket;
+    use std::thread;
 
-    info!("Trying to enable syncookies");
-    match ::util::set_syncookies(2) {
-        Ok(_) => info!("Syncookies enabled"),
-        Err(e) => error!("{}", e),
-    }
     info!("Listening on {}", addr);
     let socket = UdpSocket::bind(addr).expect("Cannot bind socket");
+    let mut cookies_enabled = false;
+
+    let signal = ::chan_signal::notify(&[Signal::INT, Signal::TERM]);
+    thread::spawn(move || loop {
+        ::util::set_thread_name("syncookied/sig");
+        match signal.recv().unwrap() {
+            Signal::INT | Signal::TERM =>
+                match ::util::set_syncookies(1) {
+                    Ok(_) => {
+                        info!("Syncookies if needed");
+                        cookies_enabled = false;
+                    },
+                    Err(e) => error!("{}", e),
+                },
+            _ => {},
+        }
+    });
 
     loop {
         let mut buf = [0; 64];
         if let Ok((_,addr)) = socket.recv_from(&mut buf[0..]) {
+            if !cookies_enabled {
+                match ::util::set_syncookies(2) {
+                    Ok(_) => {
+                        info!("Syncookies enabled");
+                        cookies_enabled = true;
+                    },
+                    Err(e) => error!("{}", e),
+                }
+            }
             match LocalReader.read() {
                 Ok(buf) => {
                     match socket.send_to(&buf[..], addr) {
