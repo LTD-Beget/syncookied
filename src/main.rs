@@ -594,7 +594,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
 
 fn main() {
     let matches = App::new("syncookied")
-                              .version("0.2.1")
+                              .version("0.2.2")
                               .author("Alexander Polyakov <apolyakov@beget.ru>")
                               .setting(AppSettings::SubcommandsNegateReqs)
                               .subcommand(
