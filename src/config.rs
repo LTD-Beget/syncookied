@@ -13,12 +13,13 @@ use ::bpfjit::BpfJitFilter;
 
 //#[derive(Debug)]
 #[derive(Clone)]
-struct HostConfig {
-    ip: Ipv4Addr,
-    local_ip: SocketAddr,
-    mac: MacAddr,
-    filters: Vec<(BpfJitFilter,FilterAction)>,
-    default_policy: FilterAction,
+pub struct HostConfig {
+    pub ip: Ipv4Addr,
+    pub local_ip: SocketAddr,
+    pub mac: MacAddr,
+    pub filters: Vec<(BpfJitFilter,FilterAction)>,
+    pub default_policy: FilterAction,
+    pub passthrough: bool,
 }
 
 // this is called on startup and reload
@@ -28,7 +29,7 @@ pub fn configure(path: &Path) -> Result<Vec<(Ipv4Addr, SocketAddr)>, ConfigLoadi
     let mut ips = vec![];
     ::RoutingTable::clear();
     for host in hosts {
-        ::RoutingTable::add_host(host.ip, host.mac, host.default_policy, host.filters);
+        ::RoutingTable::add_host(&host);
         //::RoutingTable::with_host_config(host.ip, |hc| println!("{:?}", hc));
         ips.push((host.ip, host.local_ip));
     }
@@ -166,6 +167,7 @@ impl ConfigLoader {
         let mut ip = None;
         let mut local_ip = None;
         let mut mac = None;
+        let mut pt = false;
         let mut filters = vec![];
         let mut default_policy = FilterAction::Pass;
 
@@ -184,6 +186,13 @@ impl ConfigLoader {
                                 return Err(ConfigLoadingError::semantic(format!("unknown key: {}", key)));
                             }
                         },
+                        (&Yaml::String(ref key), &Yaml::Boolean(val)) => {
+                            if key == "passthrough" {
+                                pt = val;
+                            } else {
+                                return Err(ConfigLoadingError::semantic(format!("unknown key: {}", key)));
+                            }
+                        }, 
                         (&Yaml::String(ref key), _) => {
                             if key == "filters" {
                                 let tuple = try!(self.parse_filters(v));
@@ -207,6 +216,7 @@ impl ConfigLoader {
             mac: mac.unwrap(),
             filters: filters,
             default_policy: default_policy,
+            passthrough: pt,
         })
     }
 }

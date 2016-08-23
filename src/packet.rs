@@ -130,15 +130,21 @@ fn handle_ipv4_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket) -> Act
         pkt.ipv4_destination = header.get_destination();
         let mut fwd_mac = MacAddr::new(0xff, 0xff, 0xff, 0xff, 0xff, 0xff);
         let mut filter_action = None;
+        let mut passthrough = false;
         if ::RoutingTable::with_host_config(pkt.ipv4_destination, |hc| {
             fwd_mac = hc.mac;
+            passthrough = hc.passthrough;
             filter_action = filter::matches(&hc.filters, bytes).or(Some(hc.default))
         }) == None {
             return Action::Drop;
         }
         match filter_action {
             Some(FilterAction::Drop) => return Action::Drop,
-            None | Some(FilterAction::Pass) => {},
+            None | Some(FilterAction::Pass) => {
+                if passthrough {
+                    return Action::Forward(fwd_mac);
+                }
+            },
         }
         handle_transport_protocol(header.get_next_level_protocol(),
                                   header.payload(),
