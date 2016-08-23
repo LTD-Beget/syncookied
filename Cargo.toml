@@ -24,12 +24,10 @@ scheduler = "0.1.1"
 [dependencies.concurrent-hash-map]
 git = "https://github.com/polachok/concurrent-hash-map"
 branch = "hasher"
-rev = "7a36b53b7d19755a34bf27d0ff6cde68d1e9af1d"
 
 [dependencies.influent]
 git = "https://github.com/polachok/influent.rs"
 branch = "udp+"
-rev = "c56247afeb2d7aac7dc0b6365aa89026f46ff5c7"
 default-features = false
 features = []
 
@@ -39,22 +37,11 @@ rev = "2debf393d2cb1d7e0a8f9c2d3bb3cedcc17f2c76"
 
 [dependencies.pcap]
 git = "https://github.com/polachok/pcap"
-rev = "f5bff0b0b18b7054ea3e84db00ccf4787dc5bb4c"
 branch = "offline-bpf"
-
-#[dependencies.scheduler]
-#git = "https://github.com/polachok/rust-scheduler"
-#rev = "53b832905bf61ab8e8513e1fd9341a65d850ef27"
-#branch = "newer-libc"
 
 [dependencies.bounded-spsc-queue]
 git = "https://github.com/polachok/bounded-spsc-queue.git"
-rev = "b6e0c6e4a93ba0db0c1579b4bc59f49392cab288"
 branch = "with"
-
-[dependencies.mpsc]
-git = "https://github.com/polachok/mpsc.git"
-rev = "bf5974342d20df47963fb5041c7f01157fbf441c"
 
 [dependencies.netmap_sys]
 git = "https://github.com/polachok/netmap_sys"
@@ -63,7 +50,6 @@ features = [ "netmap_with_libs" ]
 
 [dependencies.pnet]
 git = "https://github.com/polachok/libpnet"
-rev = "8eeb66788c2cd71228b15a80e8ae894ed56b4510"
 branch = "syncookied"
 
 [build-dependencies]
