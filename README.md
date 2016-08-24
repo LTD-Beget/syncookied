@@ -4,6 +4,13 @@ syncookied
 and sending replies to them using the same cookie generation alghorithm. It can achieve
 better performance under SYN flood attacks thanks to kernel bypass (netmap).
 
+Installation
+============
+
+1. Install nightly rust (instructions here: https://www.rust-lang.org/en-US/downloads.html)
+2. Install `build-essential` and `libpcap-dev` or equivalent package for your distribution
+3. run `cargo build --release`, resulting binary will be found in target/release/syncookied.
+
 How to run
 ==========
 
@@ -89,3 +96,8 @@ It's possible to filter traffic by adding "filters" section to host configuratio
 Filters are written in pcap syntax. Consult `pcap-filter(7)` for more information. 
 Default policy is "pass". It can be changed by using `default` key.
 Note that filtering happens on layer 4.
+
+
+License
+=======
+`syncookied` is distributed under the term of GPLv2.
