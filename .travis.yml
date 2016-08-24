@@ -4,5 +4,4 @@ rust:
 script:
   - |
       git clone --depth=1 https://github.com/luigirizzo/netmap &&
-      CFLAGS = "-I${PWD}/netmap/sys/"
-      cargo build --verbose
+      CFLAGS="-I${PWD}/netmap/sys/" cargo build --verbose
