@@ -100,6 +100,10 @@ Filters are written in pcap syntax. Consult `pcap-filter(7)` for more informatio
 Default policy is "pass". It can be changed by using `default` key.
 Note that filtering happens on layer 4.
 
+Performance
+===========
+syncookied under 12.65 Mpps syn flood attack utilizing 12 cores of Xeon E5-2680v3:
+![syncookied perf](http://i.imgur.com/Y5HhQmh.png)
 
 License
 =======
