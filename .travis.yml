@@ -1,0 +1,11 @@
+language: rust
+rust:
+    - nightly
+addons:
+  apt:
+    packages:
+        - libpcap-dev
+script:
+  - |
+      git clone --depth=1 https://github.com/luigirizzo/netmap &&
+      CFLAGS="-I${PWD}/netmap/sys/" cargo build --verbose
