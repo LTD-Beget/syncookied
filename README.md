@@ -1,6 +1,8 @@
 syncookied
 ==========
 
+![syncookied logo](https://beget.com/images/syncookied/ddos_beget.png)
+
 [![Build Status](https://travis-ci.org/LTD-Beget/syncookied.svg?branch=master)](https://travis-ci.org/LTD-Beget/syncookied)
 
 `syncookied` emulates linux kernel syncookie functionality by intercepting SYN packets
