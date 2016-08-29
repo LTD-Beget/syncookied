@@ -5,17 +5,24 @@
  * in an architecture-specific manner due to speed.
  */
 
-#include <linux/types.h>
+#include <sys/types.h>
 #include <stdint.h>
 
 #define likely(x)      __builtin_expect(!!(x), 1)
 #define unlikely(x)    __builtin_expect(!!(x), 0)
 
+#define __bitwise 
 #define __force
 typedef uint8_t u8;
 typedef uint16_t u16;
 typedef uint32_t u32;
 typedef uint64_t u64;
+typedef uint16_t __u8;
+typedef uint16_t __u16;
+typedef uint32_t __u32;
+typedef uint64_t __u64;
+typedef int64_t __s64;
+typedef int32_t __s32;
 
 typedef __u16 __bitwise __le16;
 typedef __u16 __bitwise __be16;
