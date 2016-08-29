@@ -679,7 +679,7 @@ fn main() {
         let rx_mac: MacAddr = matches.value_of("in-mac")
                                 .map(str::to_owned)
                                 .or_else(|| util::get_iface_mac(rx_iface).ok())
-                                .map(|mac| MacAddr::from_str(&mac).expect("Expected valid mac")).unwrap();
+                                .map(|mac| MacAddr::from_str(&mac).expect("Expected valid mac")).expect("Input mac not set");
         let tx_mac: MacAddr = matches.value_of("out-mac")
                                 .map(str::to_owned)
                                 .or_else(|| util::get_iface_mac(tx_iface).ok())
