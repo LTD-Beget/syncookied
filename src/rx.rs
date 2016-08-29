@@ -6,8 +6,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use ::netmap::{self, NetmapDescriptor, RxSlot};
 use ::ForwardedPacket;
 use ::packet::{self,IngressPacket};
-use ::scheduler;
-use ::scheduler::{CpuSet, Policy};
 use ::pnet::util::MacAddr;
 use ::util;
 use ::libc;
@@ -124,8 +122,7 @@ impl<'a> Receiver<'a> {
         info!("Rx rings: {:?}", self.netmap.get_rx_rings());
         util::set_thread_name(&format!("syncookied/rx{:02}", self.ring_num));
 
-        scheduler::set_self_affinity(CpuSet::single(self.cpu)).expect("setting affinity failed");
-        scheduler::set_self_policy(Policy::Fifo, 20).expect("setting sched policy failed");
+	util::set_cpu_prio(self.cpu, 20);
 
         /* wait for card to reinitialize */
         thread::sleep(Duration::new(1, self.ring_num as u32 * 100));

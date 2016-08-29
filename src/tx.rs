@@ -7,8 +7,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use ::netmap::{self, NetmapDescriptor, TxSlot, NetmapSlot};
 use ::packet::{self, IngressPacket};
 use ::ForwardedPacket;
-use ::scheduler;
-use ::scheduler::{CpuSet, Policy};
 use ::pnet::util::MacAddr;
 use ::pnet::packet::ethernet::MutableEthernetPacket;
 use ::spsc;
@@ -89,8 +87,7 @@ impl<'a> Sender<'a> {
 
         util::set_thread_name(&format!("syncookied/tx{:02}", self.ring_num));
 
-        scheduler::set_self_affinity(CpuSet::single(self.cpu)).expect("setting affinity failed");
-        scheduler::set_self_policy(Policy::Fifo, 20).expect("setting sched policy failed");
+        util::set_cpu_prio(self.cpu, 20);
 
         /* wait for card to reinitialize */
         thread::sleep(Duration::new(1, self.ring_num as u32 * 100));

@@ -19,7 +19,10 @@ chan-signal = "0.1.6"
 log = "0.3.6"
 syslog = "3.1.0"
 chrono = "0.2.22"
-scheduler = "0.1.1"
+
+[dependencies.scheduler]
+git = "https://github.com/polachok/rust-scheduler"
+branch = "portability"
 
 [dependencies.concurrent-hash-map]
 git = "https://github.com/polachok/concurrent-hash-map"
@@ -45,12 +48,13 @@ branch = "with"
 
 [dependencies.netmap_sys]
 git = "https://github.com/polachok/netmap_sys"
-rev = "0d48d654fc4b1d8c29e33094afb29c11d4ce7c53"
+branch = "freebsd"
 features = [ "netmap_with_libs" ]
 
 [dependencies.pnet]
 git = "https://github.com/polachok/libpnet"
 branch = "syncookied"
+#rev = "8eeb66788"
 
 [build-dependencies]
 gcc = "0.3.26"

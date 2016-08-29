@@ -21,6 +21,7 @@ extern crate influent;
 extern crate concurrent_hash_map;
 
 use std::fmt;
+use std::str::FromStr;
 use std::cell::RefCell;
 use std::thread;
 use std::path::PathBuf;
@@ -28,7 +29,6 @@ use std::time::Duration;
 use std::sync::atomic::{AtomicUsize};
 use std::sync::Arc;
 use std::net::Ipv4Addr;
-use std::str::FromStr;
 use pnet::util::MacAddr;
 use parking_lot::{RwLock,Mutex,Condvar};
 use concurrent_hash_map::ConcurrentHashMap;
@@ -679,11 +679,11 @@ fn main() {
         let rx_mac: MacAddr = matches.value_of("in-mac")
                                 .map(str::to_owned)
                                 .or_else(|| util::get_iface_mac(rx_iface).ok())
-                                .map(|mac| util::parse_mac(&mac).expect("Expected valid mac")).unwrap();
+                                .map(|mac| MacAddr::from_str(&mac).expect("Expected valid mac")).unwrap();
         let tx_mac: MacAddr = matches.value_of("out-mac")
                                 .map(str::to_owned)
                                 .or_else(|| util::get_iface_mac(tx_iface).ok())
-                                .map(|mac| util::parse_mac(&mac).expect("Expected valid mac")).unwrap_or(rx_mac.clone());
+                                .map(|mac| MacAddr::from_str(&mac).expect("Expected valid mac")).unwrap_or(rx_mac.clone());
         let ncpus = util::get_cpu_count();
         let qlen = matches.value_of("qlen")
                           .map(|x| u32::from_str(x).expect("Expected number for queue length"))

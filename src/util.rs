@@ -6,6 +6,10 @@ use std::num::ParseIntError;
 use ::libc;
 use ::pnet::util::MacAddr;
 
+use ::scheduler;
+#[cfg(os = "linux")]
+use ::scheduler::{CpuSet, Policy};
+
 pub fn set_thread_name(name: &str) {
     let tid = unsafe { libc::syscall(186 /* gettid on x86_64 */) }; /* FIXME */
     let mut file = OpenOptions::new()
@@ -33,15 +37,6 @@ pub fn get_cpu_count() -> usize {
     }
 }
 
-// TODO: use from_str and drop this
-pub fn parse_mac(text: &str) -> Result<MacAddr, ParseIntError> {
-    let mut result = [0, 0, 0, 0, 0, 0];
-    for (idx, word) in text.split(':').enumerate() {
-        result[idx] = try!(u8::from_str_radix(word, 16));
-    }
-    Ok(MacAddr::new(result[0], result[1], result[2], result[3], result[4], result[5]))
-}
-
 pub fn get_iface_mac(iface: &str) -> Result<String, io::Error> {
     let mut path = PathBuf::from("/sys/class/net/");
     path.push(iface);
@@ -65,4 +60,16 @@ pub fn get_host_name() -> Option<String> {
         let cstr = unsafe { CString::from_vec_unchecked(buf) };
         Some(cstr.into_string().unwrap())
     }
+}
+
+#[cfg(os = "linux")]
+pub fn set_cpu_prio(cpu: usize, prio: usize) {
+    scheduler::set_self_affinity(CpuSet::single(self.cpu)).expect("setting affinity failed");
+    scheduler::set_self_policy(Policy::Fifo, prio).expect("setting sched policy failed");
+}
+
+// not currently supported in rust-scheduler
+#[cfg(not(os = "linux"))]
+pub fn set_cpu_prio(cpu: usize, prio: usize) {
+    println!("Cpu binding and scheduling prio not implemented");
 }
