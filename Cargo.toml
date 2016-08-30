@@ -47,8 +47,7 @@ git = "https://github.com/polachok/bounded-spsc-queue.git"
 branch = "with"
 
 [dependencies.netmap_sys]
-git = "https://github.com/polachok/netmap_sys"
-branch = "freebsd"
+version = "0.1.2"
 features = [ "netmap_with_libs" ]
 
 [dependencies.pnet]

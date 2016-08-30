@@ -10,6 +10,7 @@ use ::scheduler;
 #[cfg(os = "linux")]
 use ::scheduler::{CpuSet, Policy};
 
+#[cfg(os = "linux")]
 pub fn set_thread_name(name: &str) {
     let tid = unsafe { libc::syscall(186 /* gettid on x86_64 */) }; /* FIXME */
     let mut file = OpenOptions::new()
@@ -17,6 +18,11 @@ pub fn set_thread_name(name: &str) {
                     .create(false)
                     .open(format!("/proc/self/task/{}/comm", tid)).unwrap();
     file.write_all(name.as_bytes()).ok();
+}
+
+#[cfg(not(os = "linux"))]
+pub fn set_thread_name(_: &str) {
+   // todo: use setproctitle() on bsd
 }
 
 /// enable/disable syncookies on linux
