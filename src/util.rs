@@ -2,15 +2,13 @@
 use std::path::{PathBuf};
 use std::fs::{File,OpenOptions};
 use std::io::{self,Write,Read};
-use std::num::ParseIntError;
 use ::libc;
-use ::pnet::util::MacAddr;
 
 use ::scheduler;
-#[cfg(os = "linux")]
+#[cfg(target_os = "linux")]
 use ::scheduler::{CpuSet, Policy};
 
-#[cfg(os = "linux")]
+#[cfg(target_os = "linux")]
 pub fn set_thread_name(name: &str) {
     let tid = unsafe { libc::syscall(186 /* gettid on x86_64 */) }; /* FIXME */
     let mut file = OpenOptions::new()
@@ -20,7 +18,7 @@ pub fn set_thread_name(name: &str) {
     file.write_all(name.as_bytes()).ok();
 }
 
-#[cfg(not(os = "linux"))]
+#[cfg(not(target_os = "linux"))]
 pub fn set_thread_name(_: &str) {
    // todo: use setproctitle() on bsd
 }
@@ -68,14 +66,14 @@ pub fn get_host_name() -> Option<String> {
     }
 }
 
-#[cfg(os = "linux")]
-pub fn set_cpu_prio(cpu: usize, prio: usize) {
-    scheduler::set_self_affinity(CpuSet::single(self.cpu)).expect("setting affinity failed");
+#[cfg(target_os = "linux")]
+pub fn set_cpu_prio(cpu: usize, prio: i32) {
+    scheduler::set_self_affinity(CpuSet::single(cpu)).expect("setting affinity failed");
     scheduler::set_self_policy(Policy::Fifo, prio).expect("setting sched policy failed");
 }
 
 // not currently supported in rust-scheduler
-#[cfg(not(os = "linux"))]
-pub fn set_cpu_prio(cpu: usize, prio: usize) {
+#[cfg(not(target_os = "linux"))]
+pub fn set_cpu_prio(cpu: usize, prio: i32) {
     println!("Cpu binding and scheduling prio not implemented");
 }
