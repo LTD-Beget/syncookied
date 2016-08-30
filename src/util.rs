@@ -2,9 +2,7 @@
 use std::path::{PathBuf};
 use std::fs::{File,OpenOptions};
 use std::io::{self,Write,Read};
-use std::num::ParseIntError;
 use ::libc;
-use ::pnet::util::MacAddr;
 
 use ::scheduler;
 #[cfg(target_os = "linux")]
