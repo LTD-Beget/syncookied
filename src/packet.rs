@@ -141,6 +141,7 @@ fn handle_ipv4_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket) -> Act
         match filter_action {
             Some(FilterAction::Drop) => return Action::Drop,
             None | Some(FilterAction::Pass) => {
+                ::RoutingTable::with_host_config_mut(pkt.ipv4_destination, |hc| { hc.packets += 1; });
                 if passthrough {
                     return Action::Forward(fwd_mac);
                 }

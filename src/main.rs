@@ -273,6 +273,7 @@ pub struct HostConfiguration {
     filters: Arc<Vec<(BpfJitFilter,filter::FilterAction)>>,
     default: filter::FilterAction,
     passthrough: bool,
+    packets: u32,
 }
 
 impl HostConfiguration {
@@ -287,6 +288,7 @@ impl HostConfiguration {
             filters: Arc::new(filters),
             default: default,
             passthrough: pt,
+            packets: 0,
         }
     }
 
@@ -300,6 +302,7 @@ impl HostConfiguration {
         self.default = other.default;
         self.passthrough = other.passthrough;
         // skip copying state_table
+        self.packets = other.packets;
     }
 }
 
@@ -315,6 +318,7 @@ impl Clone for HostConfiguration {
             filters: self.filters.clone(),
             default: self.default,
             passthrough: self.passthrough,
+            packets: self.packets,
         }
     }
 }

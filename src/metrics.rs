@@ -41,6 +41,10 @@ impl<'a> Metric<'a> {
         Metric { inner: m }
     }
 
+    pub fn add_tag(&mut self, tag: (&'a str, &'a str)) {
+        self.inner.add_tag(tag.0, tag.1);
+    }
+
     pub fn set_value(&mut self, val: i64) {
         self.inner.add_field("value", Value::Integer(val));
     }
