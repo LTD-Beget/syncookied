@@ -109,6 +109,19 @@ impl<'a> Receiver<'a> {
         metrics[5].set_value((stats.failed / seconds) as i64);
     }
 
+    fn update_dynamic_metrics(client: &metrics::Client, tags: &[(&str, &str)], seconds: u32) {
+        for ip in ::RoutingTable::get_ips() {
+            let ip_tag = format!("{}", ip);
+            let mut m = metrics::Metric::new_with_tags("rx_pps_ip", tags);
+            m.add_tag(("dest_ip", &ip_tag));
+            ::RoutingTable::with_host_config_mut(ip, |hc| {
+                    m.set_value((hc.packets / seconds) as i64);
+                    hc.packets = 0;
+            });
+            client.send(&[m]);
+        }
+    }
+
     // main RX loop
     pub fn run(mut self) {
         let metrics_client = self.metrics_addr.map(metrics::Client::new);
@@ -122,7 +135,7 @@ impl<'a> Receiver<'a> {
         info!("Rx rings: {:?}", self.netmap.get_rx_rings());
         util::set_thread_name(&format!("syncookied/rx{:02}", self.ring_num));
 
-	util::set_cpu_prio(self.cpu, 20);
+        util::set_cpu_prio(self.cpu, 20);
 
         /* wait for card to reinitialize */
         thread::sleep(Duration::new(1, self.ring_num as u32 * 100));
@@ -204,6 +217,7 @@ impl<'a> Receiver<'a> {
                     let stats = &self.stats;
                     Self::update_metrics(stats, &mut metrics, seconds);
                     metrics_client.send(&metrics);
+                    Self::update_dynamic_metrics(metrics_client, &tags, seconds);
                 }
                 rate = self.stats.received/seconds;
                 debug!("[RX#{}]: received: {}Pkts/s, dropped: {}Pkts/s, forwarded: {}Pkts/s, queued: {}Pkts/s, overflowed: {}Pkts/s, failed: {}Pkts/s",
