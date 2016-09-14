@@ -7,6 +7,11 @@ build = "build.rs"
 license = "GPL-2.0"
 readme = "README.md"
 
+[features]
+sse3 = []
+avx = []
+default = [ "avx" ]
+
 [dependencies]
 libc = "0.2.11"
 crossbeam = "0.2.5"
