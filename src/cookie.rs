@@ -13,7 +13,6 @@ const SHA_WORKSPACE_WORDS: usize = 16;
 #[allow(dead_code)]
 const MAX_SYNCOOKIE_AGE: u32 = 2;
 
-
 #[inline]
 fn cookie_hash(source_addr: u32, dest_addr: u32, source_port: u16, dest_port: u16,
                 count: u32, secret: &[u32;17]) -> u32 {
@@ -28,7 +27,7 @@ fn cookie_hash(source_addr: u32, dest_addr: u32, source_port: u16, dest_port: u1
         // TODO: use cargo features or runtime detection to choose the fastest
         //
         //::sha1::sha1_transform_ssse3(tmp.as_mut_ptr().offset(16), tmp.as_ptr() as *const u8, 1);
-        ::sha1::sha1_transform_avx(tmp.as_mut_ptr().offset(16), tmp.as_ptr() as *const u8, 1);
+        ::sha1::sha1_transform_platform(tmp.as_mut_ptr().offset(16), tmp.as_ptr() as *const u8, 1);
         //::sha1::sha_transform(tmp.as_mut_ptr().offset(16), tmp.as_ptr() as *const u8, tmp.as_mut_ptr().offset(16 + 5));
     }
 

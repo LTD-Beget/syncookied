@@ -15,7 +15,9 @@ Installation
 1. Install nightly rust (instructions here: https://www.rust-lang.org/en-US/downloads.html)
 2. Install `build-essential` and `libpcap-dev` or equivalent package for your distribution
 3. Install [netmap](https://github.com/luigirizzo/netmap). Make sure netmap.h / netmap_user.h can be found in /usr/include. Alternative you can point CFLAGS variable to their location: [example](https://github.com/LTD-Beget/syncookied/blob/master/.travis.yml).
-4. run `cargo build --release`, resulting binary will be found in target/release/syncookied.
+4. run `cargo build --release`, resulting binary will be found in target/release/syncookied. 
+
+Note: we use [AVX](https://en.wikipedia.org/wiki/Advanced_Vector_Extensions)-accelerated SHA1 function by default. SSE3 implementation is also available under sse3 feature flag, i.e.:  `cargo build --features=sse3 --no-default-features --release`.
 
 How to run
 ==========
