@@ -45,8 +45,10 @@ impl UptimeReader for UdpReader {
         try!(socket.set_read_timeout(Some(timeout)));
         try!(socket.set_write_timeout(Some(timeout)));
         loop {
+            debug!("[uptime] [{}] sending tcp secret request", self.addr);
             socket.send_to(b"YO", self.addr).unwrap();
             if let Ok(..) = socket.recv_from(&mut buf[0..]) {
+                debug!("[uptime] [{}] response received", self.addr);
                 return Ok(buf);
             }
         }
@@ -65,6 +67,7 @@ pub fn update(ip: Ipv4Addr, buf: Vec<u8>) {
     let mut hz = 300;
     let mut syncookie_secret: [[u32;17];2] = [[0;17];2];
 
+    debug!("[uptime] [{}] Updating secrets", &ip);
     let reader = BufReader::new(&buf[..]);
     for (idx, line) in reader.lines().enumerate() {
         let line = line.unwrap();
@@ -108,6 +111,7 @@ pub fn update(ip: Ipv4Addr, buf: Vec<u8>) {
             ptr::copy_nonoverlapping(syncookie_secret[0].as_ptr(), hc.syncookie_secret[0 as usize].as_mut_ptr(), 17);
             ptr::copy_nonoverlapping(syncookie_secret[1].as_ptr(), hc.syncookie_secret[1 as usize].as_mut_ptr(), 17);
         }
+        debug!("[uptime] [{}] updated secrets {}/{}, [{:?}]", &ip, jiffies, tcp_cookie_time, &hc.syncookie_secret[0][0..8]);
     });
 }
 
