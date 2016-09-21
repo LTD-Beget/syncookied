@@ -129,14 +129,18 @@ pub fn run_server(addr: &str) {
     thread::spawn(move || loop {
         ::util::set_thread_name("syncookied/sig");
         match signal.recv().unwrap() {
-            Signal::INT | Signal::TERM =>
+            Signal::INT | Signal::TERM => {
+                use std::process;
                 match ::util::set_syncookies(1) {
                     Ok(_) => {
                         info!("Syncookies if needed");
                         cookies_enabled = false;
                     },
                     Err(e) => error!("{}", e),
-                },
+                };
+                info!("SIGINT received, exiting");
+                process::exit(0);
+            },
             _ => {},
         }
     });
