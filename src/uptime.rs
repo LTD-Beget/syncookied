@@ -1,5 +1,6 @@
 /// Functions related to tcp secret reading and updating
 use std::io;
+use std::time::Duration;
 use std::net::{Ipv4Addr,SocketAddr};
 
 pub trait UptimeReader: Send {
@@ -37,7 +38,6 @@ impl UdpReader {
 impl UptimeReader for UdpReader {
     fn read(&self) -> io::Result<Vec<u8>> {
         use std::net::UdpSocket;
-        use std::time::Duration;
 
         let mut buf = vec![0;1024];
         let socket = try!(UdpSocket::bind("0.0.0.0:0"));
@@ -122,28 +122,38 @@ pub fn run_server(addr: &str) {
     use std::thread;
 
     info!("Listening on {}", addr);
-    let socket = UdpSocket::bind(addr).expect("Cannot bind socket");
     let mut cookies_enabled = false;
+    let socket = UdpSocket::bind(addr).expect("Cannot bind socket");
+    let timeout = Duration::new(1, 0);
+    socket.set_read_timeout(Some(timeout)).expect("Cannot set read timeout");
+    socket.set_write_timeout(Some(timeout)).expect("Cannot set write timeout");
 
     let signal = ::chan_signal::notify(&[Signal::INT, Signal::TERM]);
     thread::spawn(move || loop {
         ::util::set_thread_name("syncookied/sig");
         match signal.recv().unwrap() {
-            Signal::INT | Signal::TERM =>
+            Signal::INT | Signal::TERM => {
+                use std::process;
                 match ::util::set_syncookies(1) {
                     Ok(_) => {
                         info!("Syncookies if needed");
                         cookies_enabled = false;
                     },
                     Err(e) => error!("{}", e),
-                },
+                };
+                info!("SIGINT received, exiting");
+                process::exit(0);
+            },
             _ => {},
         }
     });
 
     loop {
         let mut buf = [0; 64];
-        if let Ok((_,addr)) = socket.recv_from(&mut buf[0..]) {
+        if let Ok((len,addr)) = socket.recv_from(&mut buf[0..]) {
+            if len < 2 {
+                continue;
+            }
             if !cookies_enabled {
                 match ::util::set_syncookies(2) {
                     Ok(_) => {
