@@ -11,6 +11,9 @@
 #define likely(x)      __builtin_expect(!!(x), 1)
 #define unlikely(x)    __builtin_expect(!!(x), 0)
 
+/* Forces a function to be always inlined.  */
+# define __always_inline __inline __attribute__ ((__always_inline__))
+
 #define __bitwise 
 #define __force
 typedef uint8_t u8;
