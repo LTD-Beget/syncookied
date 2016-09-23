@@ -37,8 +37,7 @@ default-features = false
 features = []
 
 [dependencies.bpfjit]
-git = "https://github.com/polachok/bpfjit"
-rev = "2debf393d2cb1d7e0a8f9c2d3bb3cedcc17f2c76"
+version = "0.1.1"
 
 [dependencies.pcap]
 git = "https://github.com/polachok/pcap"
@@ -49,7 +48,7 @@ git = "https://github.com/polachok/bounded-spsc-queue.git"
 branch = "with"
 
 [dependencies.netmap_sys]
-version = "0.1.2"
+version = "0.1.3"
 features = [ "netmap_with_libs" ]
 
 [dependencies.pnet]
