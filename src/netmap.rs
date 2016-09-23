@@ -494,6 +494,7 @@ impl NetmapDescriptor {
         unsafe { (*self.raw).fd }
     }
 
+    /*
     #[allow(dead_code)]
     pub fn tx_sync(fd: i32) {
         unsafe { libc::ioctl(fd, netmap::NIOCTXSYNC as u64) };
@@ -503,6 +504,7 @@ impl NetmapDescriptor {
     pub fn rx_sync(fd: i32) {
         unsafe { libc::ioctl(fd, netmap::NIOCRXSYNC as u64) };
     }
+    */
 
     pub fn poll(&mut self, dir: Direction) -> Option<()> {
         let fd = unsafe { (*self.raw).fd };
