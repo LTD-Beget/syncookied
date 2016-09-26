@@ -94,7 +94,7 @@ pub fn parse_addr(s: &str) -> io::Result<(Protocol,SocketAddr)> {
             url.with_default_port(|_| Err(())).and_then(|hp| hp.to_socket_addrs().map(|mut sa| sa.next()))
         },
         Err(_) => {
-            warn!("Deprecated syntax. Use udp://1.2.3.4:1488/ instead");
+            warn!("Deprecated syntax: use `udp://{}` instead", s);
             s.to_socket_addrs().map(|mut sa| sa.next())
         },
     }).unwrap();

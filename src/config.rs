@@ -10,12 +10,14 @@ use std::io::{self,Read};
 use ::pnet::util::MacAddr;
 use ::filter::{RuleLoader,FilterAction};
 use ::bpfjit::BpfJitFilter;
+use ::uptime::{Protocol,UptimeReader,UdpReader,TcpReader};
+use ::util;
 
 //#[derive(Debug)]
 #[derive(Clone)]
 pub struct HostConfig {
     pub ip: Ipv4Addr,
-    pub local_ip: SocketAddr,
+    pub local_addr: (Protocol, SocketAddr),
     pub mac: MacAddr,
     pub filters: Vec<(BpfJitFilter,FilterAction)>,
     pub default_policy: FilterAction,
@@ -23,7 +25,7 @@ pub struct HostConfig {
 }
 
 // this is called on startup and reload
-pub fn configure(path: &Path) -> Result<Vec<(Ipv4Addr, SocketAddr)>, ConfigLoadingError> {
+pub fn configure(path: &Path) -> Result<Vec<(Ipv4Addr, Box<UptimeReader>)>, ConfigLoadingError> {
     let loader = try!(ConfigLoader::new(path));
     let hosts = try!(loader.load());
     let mut ips = vec![];
@@ -31,7 +33,13 @@ pub fn configure(path: &Path) -> Result<Vec<(Ipv4Addr, SocketAddr)>, ConfigLoadi
     for host in hosts {
         ::RoutingTable::add_host(&host);
         //::RoutingTable::with_host_config(host.ip, |hc| println!("{:?}", hc));
-        ips.push((host.ip, host.local_ip));
+        //ips.push((host.ip, host.local_addr));
+        let (proto, addr) = host.local_addr;
+        let reader = match proto {
+            Protocol::Udp => Box::new(UdpReader::new(addr.to_owned())) as Box<UptimeReader>,
+            Protocol::Tcp => Box::new(TcpReader::new(addr.to_owned())) as Box<UptimeReader>,
+        };
+        ips.push((host.ip, reader));
     }
     Ok(ips)
 }
@@ -165,7 +173,7 @@ impl ConfigLoader {
 
     fn parse_host(&self, doc: &Yaml) -> Result<HostConfig,ConfigLoadingError> {
         let mut ip = None;
-        let mut local_ip = None;
+        let mut local_addr = None;
         let mut mac = None;
         let mut pt = false;
         let mut filters = vec![];
@@ -178,8 +186,8 @@ impl ConfigLoader {
                         (&Yaml::String(ref key), &Yaml::String(ref val)) => {
                             if key == "ip" {
                                 ip = Some(try!(Ipv4Addr::from_str(val)));
-                            } else if key == "local_ip" || key == "secrets_addr" {
-                                local_ip = Some(try!(SocketAddr::from_str(val)));
+                            } else if key == "local_addr" || key == "secrets_addr" {
+                                local_addr = Some(try!(util::parse_addr(val)));
                             } else if key == "mac" {
                                 mac = Some(try!(Self::validate_mac(val)));
                             } else {
@@ -212,7 +220,7 @@ impl ConfigLoader {
         }
         Ok(HostConfig {
             ip: ip.unwrap(),
-            local_ip: local_ip.unwrap(),
+            local_addr: local_addr.unwrap(),
             mac: mac.unwrap(),
             filters: filters,
             default_policy: default_policy,

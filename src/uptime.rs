@@ -2,11 +2,12 @@
 use std::io;
 use std::io::{Read,Write};
 use std::time::Duration;
-use std::net::{UdpSocket,TcpListener};
+use std::thread;
+use std::net::{UdpSocket,TcpListener,TcpStream};
 use std::net::{Ipv4Addr,SocketAddr};
 use ::util;
 
-#[derive(Debug,Eq,PartialEq)]
+#[derive(Debug,Eq,PartialEq,Copy,Clone)]
 pub enum Protocol {
     Tcp,
     Udp,
@@ -14,13 +15,13 @@ pub enum Protocol {
 
 pub trait UptimeReader: Send {
     /// returns contents of /proc/tcp_secrets file
-    fn read(&self) -> io::Result<Vec<u8>>;
+    fn read(&mut self) -> io::Result<Vec<u8>>;
 }
 
 pub struct LocalReader;
 
 impl UptimeReader for LocalReader {
-    fn read(&self) -> io::Result<Vec<u8>> {
+    fn read(&mut self) -> io::Result<Vec<u8>> {
         use std::fs::File;
         use std::io::prelude::*;
         let mut file = try!(File::open("/proc/beget_uptime")
@@ -45,7 +46,7 @@ impl UdpReader {
 }
 
 impl UptimeReader for UdpReader {
-    fn read(&self) -> io::Result<Vec<u8>> {
+    fn read(&mut self) -> io::Result<Vec<u8>> {
         use std::net::UdpSocket;
 
         let mut buf = vec![0;1024];
@@ -58,6 +59,59 @@ impl UptimeReader for UdpReader {
             socket.send_to(b"YO", self.addr).unwrap();
             if let Ok(..) = socket.recv_from(&mut buf[0..]) {
                 debug!("[uptime] [{}] response received", self.addr);
+                return Ok(buf);
+            }
+        }
+    }
+}
+
+pub struct TcpReader {
+    addr: SocketAddr,
+    sock: Option<TcpStream>,
+}
+
+impl TcpReader {
+    pub fn new(addr: SocketAddr) -> Self {
+        TcpReader {
+            addr: addr,
+            sock: None,
+        }
+    }
+
+    fn stream(&mut self) -> &mut TcpStream {
+        loop {
+            match self.sock {
+                Some(ref mut sock) => return sock,
+                None => {
+                    self.sock = match TcpStream::connect(self.addr) {
+                        Ok(sock) => Some(sock),
+                        Err(e) => {
+                            error!("can't connect to {:?}: {}", self.addr, e);
+                            None
+                        },
+                    };
+                },
+            }
+            thread::sleep(Duration::new(1, 0));
+        }
+    }
+}
+
+impl UptimeReader for TcpReader {
+    fn read(&mut self) -> io::Result<Vec<u8>> {
+        let mut buf = vec![0;1024];
+        let addr = self.addr.clone();
+        let socket = self.stream();
+
+        let timeout = Duration::new(1, 0);
+        try!(socket.set_read_timeout(Some(timeout)));
+        try!(socket.set_write_timeout(Some(timeout)));
+
+        loop {
+            debug!("[uptime] [{}] sending tcp secret request", addr);
+            socket.write(b"YO").unwrap();
+            if let Ok(..) = socket.read(&mut buf[0..]) {
+                debug!("[uptime] [{}] response received", addr);
                 return Ok(buf);
             }
         }
