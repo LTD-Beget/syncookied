@@ -1,17 +1,27 @@
 /// Functions related to tcp secret reading and updating
 use std::io;
+use std::io::{Read,Write};
 use std::time::Duration;
+use std::thread;
+use std::net::{UdpSocket,TcpListener,TcpStream};
 use std::net::{Ipv4Addr,SocketAddr};
+use ::util;
+
+#[derive(Debug,Eq,PartialEq,Copy,Clone)]
+pub enum Protocol {
+    Tcp,
+    Udp,
+}
 
 pub trait UptimeReader: Send {
     /// returns contents of /proc/tcp_secrets file
-    fn read(&self) -> io::Result<Vec<u8>>;
+    fn read(&mut self) -> io::Result<Vec<u8>>;
 }
 
 pub struct LocalReader;
 
 impl UptimeReader for LocalReader {
-    fn read(&self) -> io::Result<Vec<u8>> {
+    fn read(&mut self) -> io::Result<Vec<u8>> {
         use std::fs::File;
         use std::io::prelude::*;
         let mut file = try!(File::open("/proc/beget_uptime")
@@ -36,7 +46,7 @@ impl UdpReader {
 }
 
 impl UptimeReader for UdpReader {
-    fn read(&self) -> io::Result<Vec<u8>> {
+    fn read(&mut self) -> io::Result<Vec<u8>> {
         use std::net::UdpSocket;
 
         let mut buf = vec![0;1024];
@@ -49,6 +59,59 @@ impl UptimeReader for UdpReader {
             socket.send_to(b"YO", self.addr).unwrap();
             if let Ok(..) = socket.recv_from(&mut buf[0..]) {
                 debug!("[uptime] [{}] response received", self.addr);
+                return Ok(buf);
+            }
+        }
+    }
+}
+
+pub struct TcpReader {
+    addr: SocketAddr,
+    sock: Option<TcpStream>,
+}
+
+impl TcpReader {
+    pub fn new(addr: SocketAddr) -> Self {
+        TcpReader {
+            addr: addr,
+            sock: None,
+        }
+    }
+
+    fn stream(&mut self) -> &mut TcpStream {
+        loop {
+            match self.sock {
+                Some(ref mut sock) => return sock,
+                None => {
+                    self.sock = match TcpStream::connect(self.addr) {
+                        Ok(sock) => Some(sock),
+                        Err(e) => {
+                            error!("can't connect to {:?}: {}", self.addr, e);
+                            None
+                        },
+                    };
+                },
+            }
+            thread::sleep(Duration::new(1, 0));
+        }
+    }
+}
+
+impl UptimeReader for TcpReader {
+    fn read(&mut self) -> io::Result<Vec<u8>> {
+        let mut buf = vec![0;1024];
+        let addr = self.addr.clone();
+        let socket = self.stream();
+
+        let timeout = Duration::new(1, 0);
+        try!(socket.set_read_timeout(Some(timeout)));
+        try!(socket.set_write_timeout(Some(timeout)));
+
+        loop {
+            debug!("[uptime] [{}] sending tcp secret request", addr);
+            socket.write(b"YO").unwrap();
+            if let Ok(..) = socket.read(&mut buf[0..]) {
+                debug!("[uptime] [{}] response received", addr);
                 return Ok(buf);
             }
         }
@@ -115,18 +178,105 @@ pub fn update(ip: Ipv4Addr, buf: Vec<u8>) {
     });
 }
 
+struct Server<T> {
+    sock: T,
+    cookies: bool,
+}
+
+impl<T> Server<T> {
+    fn enable_cookies(&mut self) {
+        if !self.cookies {
+            match ::util::set_syncookies(2) {
+                Ok(_) => {
+                    info!("Syncookies enabled");
+                    self.cookies = true;
+                },
+                Err(e) => error!("{}", e),
+            }
+        }
+    }
+}
+
+impl Server<TcpListener> {
+    pub fn new_tcp(sa: SocketAddr) -> io::Result<Server<TcpListener>> {
+        TcpListener::bind(sa).map(move |sock| Server { sock: sock, cookies: false })
+    }
+
+    pub fn run(&mut self) -> ! {
+        let timeout = Duration::new(1, 0);
+
+        loop {
+            let mut buf = [0; 64];
+            if let Ok((mut sock, _)) = self.sock.accept() {
+                let _ = sock.set_read_timeout(Some(timeout));
+                let _ = sock.set_write_timeout(Some(timeout));
+
+                if let Ok(len) = sock.read(&mut buf) {
+                    if len < 2 {
+                        continue;
+                    }
+                } else {
+                    continue;
+                }
+
+                self.enable_cookies();
+
+                match LocalReader.read() {
+                    Ok(buf) => {
+                        match sock.write(&buf[..]) {
+                            Ok(_) => {},
+                            Err(e) => error!("Error sending: {}\n", e),
+                        }
+                    }
+                    Err(e) => error!("Error reading /proc/tcp_secrets: {}", e),
+                }
+            }
+        }
+    }
+
+}
+
+impl Server<UdpSocket> {
+    pub fn new_udp(sa: SocketAddr) -> io::Result<Server<UdpSocket>> {
+        UdpSocket::bind(sa).map(move |sock| Server { sock: sock, cookies: false })
+    }
+
+    pub fn run(&mut self) -> ! {
+        let timeout = Duration::new(1, 0);
+
+        self.sock.set_read_timeout(Some(timeout)).expect("Cannot set read timeout");
+        self.sock.set_write_timeout(Some(timeout)).expect("Cannot set write timeout");
+
+        loop {
+            let mut buf = [0; 64];
+            if let Ok((len,addr)) = self.sock.recv_from(&mut buf[0..]) {
+                if len < 2 {
+                    continue;
+                }
+
+                self.enable_cookies();
+
+                match LocalReader.read() {
+                    Ok(buf) => {
+                        match self.sock.send_to(&buf[..], addr) {
+                            Ok(_) => {},
+                            Err(e) => error!("Error sending: {}\n", e),
+                        }
+                    }
+                    Err(e) => error!("Error reading /proc/tcp_secrets: {}", e),
+                }
+            }
+        }
+    }
+}
+
 /// main function in "server" mode
-pub fn run_server(addr: &str) {
+pub fn run_server(addr: &str) -> ! {
     use ::chan_signal::Signal;
-    use std::net::UdpSocket;
     use std::thread;
 
     info!("Listening on {}", addr);
-    let mut cookies_enabled = false;
-    let socket = UdpSocket::bind(addr).expect("Cannot bind socket");
-    let timeout = Duration::new(1, 0);
-    socket.set_read_timeout(Some(timeout)).expect("Cannot set read timeout");
-    socket.set_write_timeout(Some(timeout)).expect("Cannot set write timeout");
+    let (proto, addr) = util::parse_addr(addr).expect("Can't parse address");
 
     let signal = ::chan_signal::notify(&[Signal::INT, Signal::TERM]);
     thread::spawn(move || loop {
@@ -135,10 +285,7 @@ pub fn run_server(addr: &str) {
             Signal::INT | Signal::TERM => {
                 use std::process;
                 match ::util::set_syncookies(1) {
-                    Ok(_) => {
-                        info!("Syncookies if needed");
-                        cookies_enabled = false;
-                    },
+                    Ok(_) => info!("Syncookies if needed"),
                     Err(e) => error!("{}", e),
                 };
                 info!("SIGINT received, exiting");
@@ -148,30 +295,8 @@ pub fn run_server(addr: &str) {
         }
     });
 
-    loop {
-        let mut buf = [0; 64];
-        if let Ok((len,addr)) = socket.recv_from(&mut buf[0..]) {
-            if len < 2 {
-                continue;
-            }
-            if !cookies_enabled {
-                match ::util::set_syncookies(2) {
-                    Ok(_) => {
-                        info!("Syncookies enabled");
-                        cookies_enabled = true;
-                    },
-                    Err(e) => error!("{}", e),
-                }
-            }
-            match LocalReader.read() {
-                Ok(buf) => {
-                    match socket.send_to(&buf[..], addr) {
-                        Ok(_) => {},
-                        Err(e) => error!("Error sending: {}\n", e),
-                    }
-                }
-                Err(e) => error!("Error reading /proc/tcp_secrets: {}", e),
-            }
-        }
+    match proto {
+        Protocol::Tcp => Server::new_tcp(addr).unwrap().run(),
+        Protocol::Udp => Server::new_udp(addr).unwrap().run(),
     }
 }

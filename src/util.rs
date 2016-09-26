@@ -2,7 +2,10 @@
 use std::path::{PathBuf};
 use std::fs::{File,OpenOptions};
 use std::io::{self,Write,Read};
+use std::net::{SocketAddr,ToSocketAddrs};
 use ::libc;
+use ::url::Url;
+use ::uptime::Protocol;
 
 use ::scheduler;
 #[cfg(target_os = "linux")]
@@ -77,3 +80,51 @@ pub fn set_cpu_prio(cpu: usize, prio: i32) {
 pub fn set_cpu_prio(cpu: usize, prio: i32) {
     println!("Cpu binding and scheduling prio not implemented");
 }
+
+pub fn parse_addr(s: &str) -> io::Result<(Protocol,SocketAddr)> {
+    let mut proto = Protocol::Udp;
+
+    let sa = try!(match Url::parse(s) {
+        Ok(url) => {
+            proto = match url.scheme() {
+                "udp" => Protocol::Udp,
+                "tcp" => Protocol::Tcp,
+                _ => panic!("unknown protocol"),
+            };
+            url.with_default_port(|_| Err(())).and_then(|hp| hp.to_socket_addrs().map(|mut sa| sa.next()))
+        },
+        Err(_) => {
+            warn!("Deprecated syntax: use `udp://{}` instead", s);
+            s.to_socket_addrs().map(|mut sa| sa.next())
+        },
+    }).unwrap();
+    Ok((proto, sa))
+}
+
+#[test]
+fn test_parse_addr() {
+    use std::net::{IpAddr,Ipv4Addr};
+    let addr = IpAddr::V4(Ipv4Addr::new(127,0,0,1));
+    // new syntax, udp
+    {
+        let addr1 = parse_addr("udp://127.0.0.1:1488").unwrap();
+        assert_eq!(addr1.0, Protocol::Udp);
+        assert_eq!(addr1.1, SocketAddr::new(addr, 1488));
+    }
+
+    // old syntax (no proto, defaults to udp)
+    {
+        let addr1 = parse_addr("127.0.0.1:1488").unwrap();
+        assert_eq!(addr1.0, Protocol::Udp);
+        assert_eq!(addr1.1, SocketAddr::new(addr, 1488));
+    }
+
+    // new syntax, tcp
+    {
+        let addr1 = parse_addr("tcp://127.0.0.1:1488").unwrap();
+        assert_eq!(addr1.0, Protocol::Tcp);
+        assert_eq!(addr1.1, SocketAddr::new(addr, 1488));
+    }
+
+}
+

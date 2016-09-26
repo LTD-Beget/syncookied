@@ -19,6 +19,7 @@ extern crate bpfjit;
 extern crate chrono;
 extern crate influent;
 extern crate concurrent_hash_map;
+extern crate url;
 
 use std::fmt;
 use std::str::FromStr;
@@ -54,7 +55,7 @@ mod filter;
 mod logging;
 mod metrics;
 use uptime::UptimeReader;
-use packet::{IngressPacket};
+use packet::IngressPacket;
 use netmap::{Direction,NetmapDescriptor};
 
 // TODO: split "routing" into its own file
@@ -339,10 +340,10 @@ pub enum OutgoingPacket {
 fn run_uptime_readers(reload_lock: Arc<(Mutex<bool>, Condvar)>, uptime_readers: Vec<(Ipv4Addr, Box<UptimeReader>)>) {
     let one_sec = Duration::new(1, 0);
     crossbeam::scope(|scope| {
-        for (ip, uptime_reader) in uptime_readers.into_iter() {
+        for (ip, mut uptime_reader) in uptime_readers.into_iter() {
             let reload_lock = reload_lock.clone();
             info!("Uptime reader for {} starting", ip);
-            scope.spawn(move|| loop {
+            scope.spawn(move || loop {
                 ::util::set_thread_name(&format!("syncookied/{}", ip));
                 match uptime_reader.read() {
                     Ok(buf) => uptime::update(ip, buf),
@@ -434,9 +435,7 @@ fn handle_signals(path: PathBuf, reload_lock: Arc<(Mutex<bool>, Condvar)>) {
                 info!("SIGHUP received, reloading configuration");
                 match config::configure(&path) {
                     Ok(data) => {
-                        let uptime_readers = data.iter().map(|&(ip, ref addr)|
-                                                (ip, Box::new(uptime::UdpReader::new(addr.to_owned())) as Box<UptimeReader>)
-                                               ).collect();
+                        let uptime_readers = data;
                         /* wait for old readers to die */
                         {
                             let &(ref lock, ref cv) = &*reload_lock;
@@ -604,7 +603,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
 
 fn main() {
     let matches = App::new("syncookied")
-                              .version("0.2.5")
+                              .version("0.2.6")
                               .author("Alexander Polyakov <apolyakov@beget.ru>")
                               .setting(AppSettings::SubcommandsNegateReqs)
                               .subcommand(
@@ -612,8 +611,8 @@ fn main() {
                                 .about("Run /proc/beget_uptime reader")
                                 .arg(Arg::with_name("addr")
                                      .takes_value(true)
-                                     .value_name("ip:port")
-                                     .help("ip:port to listen on"))
+                                     .value_name("[tcp|udp]://ip:port")
+                                     .help("address to listen on"))
                               )
                               .arg(Arg::with_name("config")
                                    .short("c")
@@ -703,10 +702,7 @@ fn main() {
         match config::configure(&config_path) {
             Ok(config) => {
                 debug!("Config file {} loaded", config_path.display());
-                let uptime_readers =
-                    config.iter().map(|&(ip, ref addr)|
-                        (ip, Box::new(uptime::UdpReader::new(addr.to_owned())) as Box<UptimeReader>)
-                    ).collect();
+                let uptime_readers = config;
                 info!("interfaces: [Rx: {}/{}, Tx: {}/{}] Cores: {}", rx_iface, rx_mac, tx_iface, tx_mac, ncpus);
                 run(config_path, &rx_iface, &tx_iface, rx_mac, tx_mac, qlen, cpu, uptime_readers, metrics_server);
             },
