@@ -25,8 +25,8 @@ How to run
 On server you want to protect
 ------------------------------
 1. Install [tcpsecrets](https://github.com/LTD-Beget/tcpsecrets) linux kernel mode to expose tcp syncookie key and timestamp
-2. Start syncookied in `server` mode: `syncookied server <ip:port>`. Running this 
-commands automatically sets `net.ipv4.tcp_syncookies` to 2 (always) and starts a UDP server on specified ip/port.
+2. Start syncookied in `server` mode: `syncookied server <proto://ip:port>`. Running this 
+commands automatically starts a TCP or UDP server on specified ip/port and sets `net.ipv4.tcp_syncookies` to 2 on first request.
 
 On server you want to use for packet processing
 -----------------------------------------------
@@ -53,10 +53,10 @@ On server you want to use for packet processing
 4. Create hosts.yml file in the working directory, which looks like this
    ```
    - ip: 185.50.25.4
-     local_ip: 192.168.3.231:1488
+     secrets_addr: udp://192.168.3.231:1488
      mac: 0c:c4:7a:6a:fa:bf
    ```
-Here ip is the ip you want to protect, local_ip is the address where you run the UDP server and mac is the protected server's mac address.
+Here ip is external ip you want to protect, secrets_addr is the address of syncookied server running on protected host, and mac is its MAC address.
 
 5. Run `syncookied -i eth2`. It will print something like this:
    ```
