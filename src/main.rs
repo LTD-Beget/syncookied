@@ -19,6 +19,7 @@ extern crate bpfjit;
 extern crate chrono;
 extern crate influent;
 extern crate concurrent_hash_map;
+extern crate url;
 
 use std::fmt;
 use std::str::FromStr;
