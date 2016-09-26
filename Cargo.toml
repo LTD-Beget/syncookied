@@ -25,6 +25,7 @@ log = "0.3.6"
 syslog = "3.1.0"
 chrono = "0.2.22"
 concurrent-hash-map = "0.0.6"
+url = "1.2.0"
 
 [dependencies.scheduler]
 git = "https://github.com/polachok/rust-scheduler"
