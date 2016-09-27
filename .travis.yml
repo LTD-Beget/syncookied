@@ -1,11 +1,19 @@
 language: rust
+dist: trusty
 rust:
     - nightly
+sudo: required
 addons:
   apt:
     packages:
         - libpcap-dev
+        - musl-tools
+        - musl-dev
+        - musl
 script:
   - |
-      git clone --depth=1 https://github.com/luigirizzo/netmap &&
-      CFLAGS="-I${PWD}/netmap/sys/" cargo build --verbose
+      export PATH=$PATH:$HOME/.cargo/bin/ &&
+      echo "Building static binary" &&
+      sh extra/musl-build.sh &&
+      echo "Building normal binary" &&
+      CFLAGS="-I${PWD}/netmap/sys/" cargo build --verbose --target=`arch`-unknown-linux-gnu --release
