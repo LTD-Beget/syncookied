@@ -6,10 +6,7 @@ BUILD_DIR=$(pwd)
 export PATH=$PATH:$HOME/.cargo/bin/
 
 echo "=> Installing rust"
-# uninstall the rust toolchain installed by travis, we are going to use rustup
-sh ~/rust/lib/rustlib/uninstall.sh
-
-curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain=$TRAVIS_RUST_VERSION
+curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain=nightly
 
 rustc -V
 cargo -V
