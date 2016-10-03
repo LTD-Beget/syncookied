@@ -174,10 +174,12 @@ fn handle_tcp_syn(tcp: TcpPacket, pkt: &mut IngressPacket) -> Action {
     pkt.tcp_source = tcp.get_source();
     pkt.tcp_destination = tcp.get_destination();
     pkt.tcp_sequence = tcp.get_sequence();
-    let in_options = tcp.get_options_iter();
-    if let Some(ts_option) = in_options.filter(|opt| (*opt).get_number() == TcpOptionNumbers::TIMESTAMPS).nth(0) {
-        pkt.tcp_timestamp[0..4].copy_from_slice(&ts_option.payload()[0..4]);
-        //unsafe { ptr::copy_nonoverlapping::<u8>(ts_option.payload()[0..4].as_ptr(), pkt.tcp_timestamp.as_mut_ptr(), 4) };
+    if tcp.get_data_offset() > 5 {
+        let in_options = tcp.get_options_iter();
+        if let Some(ts_option) = in_options.filter(|opt| (*opt).get_number() == TcpOptionNumbers::TIMESTAMPS).nth(0) {
+            pkt.tcp_timestamp[0..4].copy_from_slice(&ts_option.payload()[0..4]);
+            //unsafe { ptr::copy_nonoverlapping::<u8>(ts_option.payload()[0..4].as_ptr(), pkt.tcp_timestamp.as_mut_ptr(), 4) };
+        }
     }
     pkt.tcp_mss = 1460; /* HACK */
     return Action::Reply(IngressPacket::default());
@@ -268,12 +270,29 @@ fn handle_tcp_fin(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
 }
 
 #[inline]
+fn is_valid_tcp(pkt: &TcpPacket) -> bool {
+    let data_offset = pkt.get_data_offset();
+
+    if pkt.packet().len() < 4 * data_offset as usize {
+        return false;
+    }
+    if data_offset < 5 || data_offset > 15 {
+        return false;
+    }
+    true
+}
+
+#[inline]
 fn handle_tcp_packet(packet: &[u8], fwd_mac: &MacAddr, pkt: &mut IngressPacket) -> Action {
     let tcp = TcpPacket::new(packet);
     if let Some(tcp) = tcp {
         //println!("TCP Packet: {}:{} > {}:{}; length: {}", source,
         //            tcp.get_source(), destination, tcp.get_destination(), packet.len());
         let flags = tcp.get_flags();
+
+        if !is_valid_tcp(&tcp) {
+            return Action::Drop;
+        }
 
         if flags & (TcpFlags::SYN | TcpFlags::ACK) == TcpFlags::SYN {
             return handle_tcp_syn(tcp, pkt);
