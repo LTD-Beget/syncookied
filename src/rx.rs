@@ -12,6 +12,7 @@ use ::libc;
 use ::spsc;
 use ::packet::Action;
 use ::metrics;
+use ::parking_lot::{Mutex,Condvar};
 
 #[derive(Debug,Default)]
 struct RxStats {
@@ -40,7 +41,7 @@ pub struct Receiver<'a> {
     chan_fwd: spsc::Producer<ForwardedPacket>,
     netmap: &'a mut NetmapDescriptor,
     stats: RxStats,
-    lock: Arc<AtomicUsize>,
+    lock: Arc<(Mutex<u32>, Condvar)>,
     mac: MacAddr,
     ring_num: u16,
     metrics_addr: Option<&'a str>,
@@ -68,7 +69,7 @@ impl<'a> Receiver<'a> {
                chan_fwd: spsc::Producer<ForwardedPacket>,
                chan_reply: spsc::Producer<IngressPacket>,
                netmap: &'a mut NetmapDescriptor,
-               lock: Arc<AtomicUsize>,
+               lock: Arc<(Mutex<u32>,Condvar)>,
                mac: MacAddr,
                metrics_addr: Option<&'a str>) -> Self {
         Receiver {
@@ -162,8 +163,6 @@ impl<'a> Receiver<'a> {
                                 self.stats.dropped += 1;
                             },
                             Action::Forward(fwd_mac) => {
-                                let to_forward = &self.lock;
-
                                 let slot_ptr: usize = slot as *mut RxSlot as usize;
                                 let buf_ptr: usize = buf.as_ptr() as usize;
 
@@ -171,7 +170,6 @@ impl<'a> Receiver<'a> {
                                 println!("[RX#{}]: forwarded slot: {:x} buf: {:x}, buf_idx: {}",
                                     ring_num, slot_ptr, buf_ptr, slot.get_buf_idx());
 */
-                                to_forward.fetch_add(1, Ordering::SeqCst);
                                 let chan = &self.chan_fwd;
                                 let packet = ForwardedPacket {
                                     slot_ptr: slot_ptr,
@@ -181,6 +179,11 @@ impl<'a> Receiver<'a> {
                                 match adaptive_push(chan, packet, 1) {
                                     Some(_) => self.stats.failed += 1,
                                     None => {
+                                        let &(ref lock, _) = &*self.lock;
+                                        let mut to_forward = lock.lock();
+                                        *to_forward += 1;
+                                        //to_forward.fetch_add(1, Ordering::SeqCst);
+
                                         self.stats.forwarded += 1;
                                         fw = true;
                                     },
@@ -204,9 +207,11 @@ impl<'a> Receiver<'a> {
                      *  }
                      */
                     if fw {
-                        let to_forward = &self.lock;
-                        while to_forward.load(Ordering::SeqCst) != 0 {
-                            unsafe { libc::sched_yield() };
+                        let &(ref lock, ref cvar) = &*self.lock;
+                        let mut to_forward = lock.lock();
+                        while *to_forward != 0 {
+                            cvar.wait(&mut to_forward);
+                            //unsafe { libc::sched_yield() };
                             //println!("[RX#{}]: waiting for forwarding to happen, {} left", ring_num, to_forward.load(Ordering::SeqCst));
                         }
                     }

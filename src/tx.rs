@@ -12,6 +12,7 @@ use ::pnet::packet::ethernet::MutableEthernetPacket;
 use ::spsc;
 use ::util;
 use ::metrics;
+use ::parking_lot::{Mutex,Condvar};
 
 #[derive(Debug,Default)]
 struct TxStats {
@@ -35,7 +36,7 @@ pub struct Sender<'a> {
     chan: Option<spsc::Consumer<IngressPacket>>,
     fwd_chan: Option<spsc::Consumer<ForwardedPacket>>,
     netmap: &'a mut NetmapDescriptor,
-    lock: Arc<AtomicUsize>,
+    lock: Arc<(Mutex<u32>, Condvar)>,
     source_mac: MacAddr,
     stats: TxStats,
     metrics_addr: Option<&'a str>,
@@ -46,7 +47,7 @@ impl<'a> Sender<'a> {
                chan: Option<spsc::Consumer<IngressPacket>>,
                fwd_chan: Option<spsc::Consumer<ForwardedPacket>>,
                netmap: &'a mut NetmapDescriptor,
-               lock: Arc<AtomicUsize>,
+               lock: Arc<(Mutex<u32>, Condvar)>,
                source_mac: MacAddr,
                metrics_addr: Option<&'a str>) -> Sender<'a> {
         Sender {
@@ -106,45 +107,6 @@ impl<'a> Sender<'a> {
                 if let Some(ring) = self.netmap.tx_iter().next() {
                     let mut tx_iter = ring.iter();
 
-                    /* send one packet */
-                    if let Some((slot, buf)) = tx_iter.next() {
-                        let stats = &mut self.stats;
-                        let lock = &mut self.lock;
-                        let ring_num = self.ring_num;
-                        let source_mac = self.source_mac;
-                        let reply_chan = self.chan.as_ref();
-                        let fwd_chan = self.fwd_chan.as_ref();
-
-                        /* try fwd chan first */
-                        if let Some(fwd_chan) = fwd_chan {
-                            if let None = fwd_chan.try_pop_with(|pkt|
-                                Self::forward(pkt, slot, stats, lock,
-                                           ring_num, source_mac)
-                            ) { /* if nothing in it, try reply_chan */
-                                if let Some(reply_chan) = reply_chan {
-                                    if let None = reply_chan.try_pop_with(|pkt|
-                                        Self::reply(pkt, slot, buf, stats,
-                                           ring_num, source_mac)) {
-                                        if rate <= 1000 {
-                                            Self::update_routing_cache();
-                                        }
-                                        thread::sleep(Duration::new(0, 100));
-                                    }
-                                }
-                            }
-                        } else {
-                            if let Some(reply_chan) = reply_chan {
-                                if let None = reply_chan.try_pop_with(|pkt|
-                                    Self::reply(pkt, slot, buf, stats,
-                                       ring_num, source_mac)) {
-                                    if rate <= 1000 {
-                                        Self::update_routing_cache();
-                                    }
-                                    thread::sleep(Duration::new(0, 100));
-                                }
-                            }
-                        }
-                    }
                     /* try to send more if we have any (non-blocking) */
                     for (slot, buf) in tx_iter {
                         let stats = &mut self.stats;
@@ -156,10 +118,14 @@ impl<'a> Sender<'a> {
 
                         /* try fwd chan first */
                         if let Some(fwd_chan) = fwd_chan {
-                            if let None = fwd_chan.try_pop_with(|pkt|
+                            if let None = fwd_chan.try_pop_with(|pkt| {
                                 Self::forward(pkt, slot, stats, lock,
-                                           ring_num, source_mac)
-                            ) { /* if nothing in it, try reply_chan */
+                                           ring_num, source_mac);
+                                let &(ref lock, ref cvar) = &**lock;
+                                let mut to_forward = lock.lock();
+                                *to_forward -= 1;
+                                cvar.notify_one();
+                            }) { /* if nothing in it, try reply_chan */
                                 if let Some(reply_chan) = reply_chan {
                                     if let None = reply_chan.try_pop_with(|pkt|
                                         Self::reply(pkt, slot, buf, stats,
@@ -224,7 +190,7 @@ impl<'a> Sender<'a> {
 
     #[inline]
     fn forward(pkt: &ForwardedPacket, slot: &mut TxSlot, stats: &mut TxStats,
-            lock: &mut Arc<AtomicUsize>, _ring_num: u16, source_mac: MacAddr) {
+            lock: &mut Arc<(Mutex<u32>, Condvar)>, _ring_num: u16, source_mac: MacAddr) {
         use std::slice;
         /* swap buffers (zero copy) */
         let rx_slot: &mut TxSlot = unsafe { mem::transmute(pkt.slot_ptr as *mut TxSlot) };
@@ -239,8 +205,10 @@ impl<'a> Sender<'a> {
         rx_slot.set_len(tx_len);
         rx_slot.set_flags(netmap::NS_BUF_CHANGED as u16);
 
+        /*
         let to_forward = &lock;
         to_forward.fetch_sub(1, Ordering::SeqCst);
+        */
 
         let mut buf = unsafe { slice::from_raw_parts_mut::<u8>(pkt.buf_ptr as *mut u8, slot.get_len() as usize) };
         /*

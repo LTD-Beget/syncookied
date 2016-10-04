@@ -509,7 +509,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
             let ring = ring;
             let (tx, rx) = spsc::make(qlen as usize);
             let (f_tx, f_rx) = spsc::make(qlen as usize);
-            let pair = Arc::new(AtomicUsize::new(0));
+            let pair = Arc::new((Mutex::new(0), Condvar::new()));
             let rx_pair = pair.clone();
 
             {
