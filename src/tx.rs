@@ -124,7 +124,9 @@ impl<'a> Sender<'a> {
                                 let &(ref lock, ref cvar) = &**lock;
                                 let mut to_forward = lock.lock();
                                 *to_forward -= 1;
-                                cvar.notify_one();
+                                if *to_forward == 0 {
+                                    cvar.notify_one();
+                                }
                             }) { /* if nothing in it, try reply_chan */
                                 if let Some(reply_chan) = reply_chan {
                                     if let None = reply_chan.try_pop_with(|pkt|
