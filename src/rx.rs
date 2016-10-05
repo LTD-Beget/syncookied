@@ -10,7 +10,7 @@ use ::pnet::util::MacAddr;
 use ::util;
 use ::libc;
 use ::spsc;
-use ::packet::Action;
+use ::packet::{Action,Reason};
 use ::metrics;
 use ::parking_lot::{Mutex,Condvar};
 
@@ -18,6 +18,13 @@ use ::parking_lot::{Mutex,Condvar};
 struct RxStats {
     pub received: u32,
     pub dropped: u32,
+    pub dropped_mac: u32,
+    pub dropped_invalid_ether: u32,
+    pub dropped_noip: u32,
+    pub dropped_filtered: u32,
+    pub dropped_invalid_ip: u32,
+    pub dropped_bad_cookie: u32,
+    pub dropped_invalid_tcp: u32,
     pub forwarded: u32,
     pub queued: u32,
     pub overflow: u32,
@@ -89,11 +96,18 @@ impl<'a> Receiver<'a> {
         ::RoutingTable::sync_tables();
     }
 
-    fn make_metrics<'t>(tags: &'t [(&'t str, &'t str)]) -> [metrics::Metric<'t>;6] {
+    fn make_metrics<'t>(tags: &'t [(&'t str, &'t str)]) -> [metrics::Metric<'t>;13] {
         use metrics::Metric;
         [
             Metric::new_with_tags("rx_pps", tags),
             Metric::new_with_tags("rx_drop", tags),
+            Metric::new_with_tags("rx_drop_mac", tags),
+            Metric::new_with_tags("rx_drop_bad_ether", tags),
+            Metric::new_with_tags("rx_drop_noip", tags),
+            Metric::new_with_tags("rx_drop_filtered", tags),
+            Metric::new_with_tags("rx_drop_bad_ip", tags),
+            Metric::new_with_tags("rx_drop_bad_cookie", tags),
+            Metric::new_with_tags("rx_drop_bad_tcp", tags),
             Metric::new_with_tags("rx_forwarded", tags),
             Metric::new_with_tags("rx_queued", tags),
             Metric::new_with_tags("rx_overflow", tags),
@@ -101,13 +115,20 @@ impl<'a> Receiver<'a> {
         ]
     }
 
-    fn update_metrics<'t>(stats: &'t RxStats, metrics: &mut [metrics::Metric<'a>;6], seconds: u32) {
+    fn update_metrics<'t>(stats: &'t RxStats, metrics: &mut [metrics::Metric<'a>;13], seconds: u32) {
         metrics[0].set_value((stats.received / seconds) as i64);
         metrics[1].set_value((stats.dropped / seconds) as i64);
-        metrics[2].set_value((stats.forwarded / seconds) as i64);
-        metrics[3].set_value((stats.queued / seconds) as i64);
-        metrics[4].set_value((stats.overflow / seconds) as i64);
-        metrics[5].set_value((stats.failed / seconds) as i64);
+        metrics[2].set_value((stats.dropped_mac / seconds) as i64);
+        metrics[3].set_value((stats.dropped_invalid_ether / seconds) as i64);
+        metrics[4].set_value((stats.dropped_noip / seconds) as i64);
+        metrics[5].set_value((stats.dropped_filtered / seconds) as i64);
+        metrics[6].set_value((stats.dropped_invalid_ip / seconds) as i64);
+        metrics[7].set_value((stats.dropped_bad_cookie / seconds) as i64);
+        metrics[8].set_value((stats.dropped_invalid_tcp / seconds) as i64);
+        metrics[9].set_value((stats.forwarded / seconds) as i64);
+        metrics[10].set_value((stats.queued / seconds) as i64);
+        metrics[11].set_value((stats.overflow / seconds) as i64);
+        metrics[12].set_value((stats.failed / seconds) as i64);
     }
 
     fn update_dynamic_metrics(client: &metrics::Client, tags: &[(&str, &str)], seconds: u32) {
@@ -159,8 +180,17 @@ impl<'a> Receiver<'a> {
                             ::RoutingTable::sync_tables();
                         }
                         match packet::handle_input(buf, self.mac) {
-                            Action::Drop => {
+                            Action::Drop(reason) => {
                                 self.stats.dropped += 1;
+                                match reason {
+                                    Reason::MacNotFound => self.stats.dropped_mac += 1,
+                                    Reason::InvalidEthernet => self.stats.dropped_invalid_ether += 1,
+                                    Reason::IpNotFound => self.stats.dropped_invalid_ip += 1,
+                                    Reason::Filtered => self.stats.dropped_filtered += 1,
+                                    Reason::InvalidIp => self.stats.dropped_invalid_ip += 1,
+                                    Reason::BadCookie => self.stats.dropped_bad_cookie += 1,
+                                    Reason::InvalidTcp => self.stats.dropped_invalid_tcp += 1,
+                                } 
                             },
                             Action::Forward(fwd_mac) => {
                                 let slot_ptr: usize = slot as *mut RxSlot as usize;

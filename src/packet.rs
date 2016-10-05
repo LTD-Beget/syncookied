@@ -44,10 +44,21 @@ lazy_static! {
     };
 }
 
+#[derive(Debug)]
+pub enum Reason {
+    MacNotFound,
+    InvalidEthernet,
+    IpNotFound,
+    Filtered,
+    InvalidIp,
+    BadCookie,
+    InvalidTcp,
+}
+
 #[allow(dead_code)]
 #[derive(Debug)]
 pub enum Action {
-    Drop,
+    Drop(Reason),
     Forward(MacAddr),
     Reply(IngressPacket)
 }
@@ -101,7 +112,7 @@ pub fn handle_input(packet_data: &[u8], mac: MacAddr) -> Action {
             x => x,
         }
     } else {
-        Action::Drop
+        Action::Drop(Reason::InvalidEthernet)
     }
 }
 
@@ -111,13 +122,13 @@ fn handle_ether_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket, mac: 
     let mac_dest = &bytes[0..6];
 
     if mac_dest != mac.0 {
-        return Action::Drop;
+        return Action::Drop(Reason::MacNotFound);
     }
     if let EtherTypes::Ipv4 = ethernet.get_ethertype() {
         pkt.ether_source.0.copy_from_slice(&bytes[6..12]);
         handle_ipv4_packet(ethernet, pkt)
     } else {
-        Action::Drop
+        Action::Drop(Reason::InvalidEthernet)
     }
 }
 
@@ -136,10 +147,10 @@ fn handle_ipv4_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket) -> Act
             passthrough = hc.passthrough;
             filter_action = filter::matches(&hc.filters, bytes).or(Some(hc.default))
         }) == None {
-            return Action::Drop;
+            return Action::Drop(Reason::IpNotFound);
         }
         match filter_action {
-            Some(FilterAction::Drop) => return Action::Drop,
+            Some(FilterAction::Drop) => return Action::Drop(Reason::Filtered),
             None | Some(FilterAction::Pass) => {
                 ::RoutingTable::with_host_config_mut(pkt.ipv4_destination, |hc| { hc.packets += 1; });
                 if passthrough {
@@ -153,7 +164,7 @@ fn handle_ipv4_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket) -> Act
                                   pkt)
     } else {
         debug!("Malformed IPv4 Packet");
-        Action::Drop
+        Action::Drop(Reason::InvalidIp)
     }
 }
 
@@ -194,7 +205,7 @@ fn handle_tcp_ack(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
     let ip_saddr = pkt.ipv4_source;
     let ip_daddr = pkt.ipv4_destination;
     let seq = tcp.get_sequence();
-    let mut action = Action::Drop;
+    let mut action = Action::Drop(Reason::BadCookie);
 
     ::RoutingTable::with_host_config_mut(ip_daddr, |hc| {
         match hc.state_table.get_state(ip_saddr, tcp_saddr, tcp_daddr) {
@@ -240,7 +251,7 @@ fn handle_tcp_rst(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
     let tcp_daddr = tcp.get_destination();
     let ip_saddr = pkt.ipv4_source;
     let ip_daddr = pkt.ipv4_destination;
-    let mut action = Action::Drop;
+    let mut action = Action::Drop(Reason::InvalidIp);
 
     ::RoutingTable::with_host_config_mut(ip_daddr, |hc| {
         if hc.state_table.get_state(ip_saddr, tcp_saddr, tcp_daddr).is_some() {
@@ -257,7 +268,7 @@ fn handle_tcp_fin(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
     let tcp_daddr = tcp.get_destination();
     let ip_saddr = pkt.ipv4_source;
     let ip_daddr = pkt.ipv4_destination;
-    let mut action = Action::Drop;
+    let mut action = Action::Drop(Reason::IpNotFound);
 
     ::RoutingTable::with_host_config_mut(ip_daddr, |hc| {
         if hc.state_table.get_state(ip_saddr, tcp_saddr, tcp_daddr).is_some() {
@@ -291,7 +302,7 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: &MacAddr, pkt: &mut IngressPacket) 
         let flags = tcp.get_flags();
 
         if !is_valid_tcp(&tcp) {
-            return Action::Drop;
+            return Action::Drop(Reason::InvalidTcp);
         }
 
         if flags & (TcpFlags::SYN | TcpFlags::ACK) == TcpFlags::SYN {
@@ -313,7 +324,7 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: &MacAddr, pkt: &mut IngressPacket) 
         Action::Forward(*fwd_mac)
     } else {
         debug!("Malformed TCP Packet");
-        Action::Drop
+        Action::Drop(Reason::InvalidTcp)
     }
 }
 
