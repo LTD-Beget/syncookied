@@ -53,6 +53,7 @@ pub enum Reason {
     InvalidIp,
     BadCookie,
     InvalidTcp,
+    StateNotFound,
 }
 
 #[allow(dead_code)]
@@ -205,7 +206,7 @@ fn handle_tcp_ack(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
     let ip_saddr = pkt.ipv4_source;
     let ip_daddr = pkt.ipv4_destination;
     let seq = tcp.get_sequence();
-    let mut action = Action::Drop(Reason::BadCookie);
+    let mut action = Action::Drop(Reason::IpNotFound);
 
     ::RoutingTable::with_host_config_mut(ip_daddr, |hc| {
         match hc.state_table.get_state(ip_saddr, tcp_saddr, tcp_daddr) {
@@ -224,8 +225,7 @@ fn handle_tcp_ack(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
         },
         None => {
             debug!("State for {}:{} -> {}:{} not found", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
-            debug!("Check cookie for {}:{} -> {}:{}", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr,
-               );
+            debug!("Check cookie for {}:{} -> {}:{}", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
             let mut secret: [[u32;17];2] = unsafe { mem::uninitialized() };
             let cookie_time = hc.tcp_cookie_time;
             secret[0].copy_from_slice(&hc.syncookie_secret[0][0..17]);
@@ -239,6 +239,7 @@ fn handle_tcp_ack(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
                 action = Action::Forward(*fwd_mac);
             } else {
                 debug!("Bad cookie, drop");
+                action = Action::Drop(Reason::BadCookie);
             }
         },
     }});
@@ -251,12 +252,14 @@ fn handle_tcp_rst(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
     let tcp_daddr = tcp.get_destination();
     let ip_saddr = pkt.ipv4_source;
     let ip_daddr = pkt.ipv4_destination;
-    let mut action = Action::Drop(Reason::InvalidIp);
+    let mut action = Action::Drop(Reason::StateNotFound);
 
     ::RoutingTable::with_host_config_mut(ip_daddr, |hc| {
         if hc.state_table.get_state(ip_saddr, tcp_saddr, tcp_daddr).is_some() {
             action = Action::Forward(*fwd_mac);
-            hc.state_table.delete_state(ip_saddr, tcp_saddr, tcp_daddr);
+            //hc.state_table.delete_state(ip_saddr, tcp_saddr, tcp_daddr);
+            debug!("RST received, passing and closing");
+            hc.state_table.set_state(ip_saddr, tcp_saddr, tcp_daddr, hc.tcp_timestamp, ConnState::Closing);
         }
     });
     action
@@ -268,7 +271,7 @@ fn handle_tcp_fin(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
     let tcp_daddr = tcp.get_destination();
     let ip_saddr = pkt.ipv4_source;
     let ip_daddr = pkt.ipv4_destination;
-    let mut action = Action::Drop(Reason::IpNotFound);
+    let mut action = Action::Forward(*fwd_mac); // Action::Drop(Reason::StateNotFound);
 
     ::RoutingTable::with_host_config_mut(ip_daddr, |hc| {
         if hc.state_table.get_state(ip_saddr, tcp_saddr, tcp_daddr).is_some() {
@@ -309,6 +312,7 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: &MacAddr, pkt: &mut IngressPacket) 
             return handle_tcp_syn(tcp, pkt);
         }
 
+    /*
         if flags & TcpFlags::FIN != 0 {
             return handle_tcp_fin(tcp, fwd_mac, pkt);
         }
@@ -320,6 +324,7 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: &MacAddr, pkt: &mut IngressPacket) 
         if flags & TcpFlags::ACK != 0 {
             return handle_tcp_ack(tcp, fwd_mac, pkt);
         }
+*/
 
         Action::Forward(*fwd_mac)
     } else {
@@ -463,7 +468,7 @@ fn build_reply(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> us
     ip.set_ecn(0);
     ip.set_identification(0);
     ip.set_header_length(5);
-    ip.set_ttl(126);
+    ip.set_ttl(64);
     ip.set_flags(2);
     ip.set_next_level_protocol(IpNextHeaderProtocols::Tcp);
     ip.set_source(pkt.ipv4_destination);
@@ -492,7 +497,7 @@ fn build_reply(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> us
         tcp.set_destination(pkt.tcp_source);
         tcp.set_sequence(seq_num);
         tcp.set_acknowledgement(pkt.tcp_sequence + 1);
-        tcp.set_window(65535);
+        tcp.set_window(28960);
         tcp.set_flags(TcpFlags::SYN | TcpFlags::ACK);
         tcp.set_data_offset(10);
         tcp.set_checksum(0);
@@ -538,7 +543,7 @@ fn build_reply(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> us
                 let mut ws = MutableTcpOptionPacket::new(&mut options[17..20]).unwrap();
                 ws.set_number(TcpOptionNumbers::WSCALE);
                 ws.get_length_raw_mut()[0] = 3;
-                ws.set_data(&[7]);
+                ws.set_data(&[8]);
             }
         }
         let cksum = {

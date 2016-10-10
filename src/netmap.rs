@@ -242,7 +242,7 @@ impl TxRing {
 
     #[inline]
     pub fn iter(&mut self) -> TxSlotIter {
-        let cur = self.0.cur;
+        let cur = self.0.head;
         TxSlotIter {
             ring: self,
             cur: cur,

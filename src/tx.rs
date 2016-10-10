@@ -115,6 +115,7 @@ impl<'a> Sender<'a> {
                         let source_mac = self.source_mac;
                         let reply_chan = self.chan.as_ref();
                         let fwd_chan = self.fwd_chan.as_ref();
+                        let mut done_fw = false;
 
                         /* try fwd chan first */
                         if let Some(fwd_chan) = fwd_chan {
@@ -124,15 +125,18 @@ impl<'a> Sender<'a> {
                                 let &(ref lock, ref cvar) = &**lock;
                                 let mut to_forward = lock.lock();
                                 *to_forward -= 1;
+                                done_fw = true;
                                 if *to_forward == 0 {
                                     cvar.notify_one();
                                 }
-                            }) { /* if nothing in it, try reply_chan */
+                            }) {
+                                /* if nothing in it, try reply_chan */
                                 if let Some(reply_chan) = reply_chan {
                                     if let None = reply_chan.try_pop_with(|pkt|
                                         Self::reply(pkt, slot, buf, stats,
                                            ring_num, source_mac)) {
-                                        thread::sleep(Duration::new(0, 100));
+                                        break;
+                                        //thread::sleep(Duration::new(0, 100));
                                     }
                                 }
                             }
@@ -144,6 +148,9 @@ impl<'a> Sender<'a> {
                                     thread::sleep(Duration::new(0, 100));
                                 }
                             }
+                        }
+                        if done_fw {
+                            break;
                         }
 /*
                         if rate <= 1000 {
@@ -159,11 +166,13 @@ impl<'a> Sender<'a> {
                 }
             }
             if before.elapsed() >= ival {
+/*
                 if let Some(ref metrics_client) = metrics_client {
                     let stats = &self.stats;
                     Self::update_metrics(stats, &mut metrics, seconds);
                     metrics_client.send(&metrics);
                 }
+*/
                 rate = self.stats.sent/seconds;
                 debug!("[TX#{}]: sent {}Pkts/s, failed {}Pkts/s", self.ring_num, rate, self.stats.failed/seconds);
                 self.stats.clear();
@@ -182,7 +191,7 @@ impl<'a> Sender<'a> {
             _ring_num: u16, source_mac: MacAddr) {
         if let Some(len) = packet::handle_reply(pkt, source_mac, buf) {
             //debug!("[TX#{}] SENDING PACKET\n", ring_num);
-            slot.set_flags(0); //netmap::NS_BUF_CHANGED as u16 /* | netmap::NS_REPORT as u16 */);
+            slot.set_flags(0);
             slot.set_len(len as u16);
             stats.sent += 1;
         } else {
