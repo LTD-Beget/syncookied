@@ -166,13 +166,11 @@ impl<'a> Sender<'a> {
                 }
             }
             if before.elapsed() >= ival {
-/*
                 if let Some(ref metrics_client) = metrics_client {
                     let stats = &self.stats;
                     Self::update_metrics(stats, &mut metrics, seconds);
                     metrics_client.send(&metrics);
                 }
-*/
                 rate = self.stats.sent/seconds;
                 debug!("[TX#{}]: sent {}Pkts/s, failed {}Pkts/s", self.ring_num, rate, self.stats.failed/seconds);
                 self.stats.clear();

@@ -49,6 +49,7 @@ mod csum;
 mod util;
 mod tx;
 mod rx;
+mod ring;
 mod uptime;
 mod config;
 mod filter;
@@ -507,11 +508,22 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
         // we spawn a thread per RX/TX queue
         for ring in 0..rx_count {
             let ring = ring;
-            let (tx, rx) = spsc::make(qlen as usize);
-            let (f_tx, f_rx) = spsc::make(qlen as usize);
-            let pair = Arc::new((Mutex::new(0), Condvar::new()));
-            let rx_pair = pair.clone();
+            //let (tx, rx) = spsc::make(qlen as usize);
+            //let (f_tx, f_rx) = spsc::make(qlen as usize);
+            //let pair = Arc::new((Mutex::new(0), Condvar::new()));
+            //let rx_pair = pair.clone();
 
+            let rx_nm = rx_nm.clone();
+            scope.spawn(move || {
+                info!("Starting thread for ring {} at {}", ring, rx_iface);
+                let mut ring_nm = {
+                    let nm = rx_nm.lock();
+                    nm.clone_ring(ring, Direction::InputOutput).unwrap()
+                };
+                let cpu = first_cpu + ring as usize;
+                ring::Ring::new(ring, cpu, &mut ring_nm, rx_mac.clone(), metrics_server).run();
+            });
+/*
             {
                 let rx_nm = rx_nm.clone();
 
@@ -525,6 +537,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
                     rx::Receiver::new(ring, cpu, f_tx, tx, &mut ring_nm, rx_pair, rx_mac.clone(), metrics_server).run();
                 });
             }
+*/
 
             /* Start an ARP thread to keep switch from forgetting about us */
             /*
@@ -545,6 +558,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
             */
 
             /* second half */
+/*
             let f_rx = if multi_if {
                 let f_tx_nm = rx_nm.clone();
                 let pair = pair.clone();
@@ -580,8 +594,8 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
                 } + first_cpu + ring as usize;
                 tx::Sender::new(ring, cpu, Some(rx), f_rx, &mut ring_nm, pair, tx_mac, metrics_server).run();
             });
+*/
         }
-
         /*
         {
             let nm = rx_nm.clone();
@@ -603,7 +617,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
 
 fn main() {
     let matches = App::new("syncookied")
-                              .version("0.2.6")
+                              .version("0.2.6-xp")
                               .author("Alexander Polyakov <apolyakov@beget.ru>")
                               .setting(AppSettings::SubcommandsNegateReqs)
                               .subcommand(

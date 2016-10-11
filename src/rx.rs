@@ -220,6 +220,7 @@ impl<'a> Receiver<'a> {
 
                                         self.stats.forwarded += 1;
                                         fw = true;
+                                        break;
                                     },
                                 }
                             },
