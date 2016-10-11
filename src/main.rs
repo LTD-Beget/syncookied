@@ -12,7 +12,6 @@ extern crate clap;
 extern crate yaml_rust;
 extern crate parking_lot;
 extern crate fnv;
-extern crate bounded_spsc_queue as spsc;
 extern crate chan_signal;
 extern crate pcap;
 extern crate bpfjit;
