@@ -19,3 +19,12 @@ script:
       sh extra/musl-build.sh &&
       echo "Building normal binary" &&
       CFLAGS="-I${PWD}/netmap/sys/" cargo build --verbose --target=`arch`-unknown-linux-gnu --release
+
+deploy:
+  provider: releases
+  skip_cleanup: true
+  api_key:
+    secure: jCgZtLtOUxk0I4pdqT8RcKVs1/epyR8zU1vQor0Zr1itkvr5bmhWsDPICeWo3Tli3YLYAzwe09Oma/DR73rHO7RoEZ6xnP1HmG0vfptDOpXiQqU5mVuUNJ/ms1PfwAQsB4a1aPD8rfWhpwdLAS6HoUScKc/wUW+F76iFeUhSvb52t8DuIo8NB2GWt2JC/byHsNKYa96DOnzDsyODeokX20GpoqMkewW2pz
+  file: target/x86_64-unknown-linux-musl/release/syncookied
+  on:
+    tags: true
