@@ -520,8 +520,8 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
 
 fn main() {
     let matches = App::new("syncookied")
-                              .version("0.2.6-xp")
-                              .author("Alexander Polyakov <apolyakov@beget.ru>")
+                              .version(env!("CARGO_PKG_VERSION"))
+                              .author(env!("CARGO_PKG_AUTHORS"))
                               .setting(AppSettings::SubcommandsNegateReqs)
                               .subcommand(
                                 SubCommand::with_name("server")
