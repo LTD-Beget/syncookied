@@ -312,7 +312,6 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: &MacAddr, pkt: &mut IngressPacket) 
             return handle_tcp_syn(tcp, pkt);
         }
 
-    /*
         if flags & TcpFlags::FIN != 0 {
             return handle_tcp_fin(tcp, fwd_mac, pkt);
         }
@@ -324,7 +323,6 @@ fn handle_tcp_packet(packet: &[u8], fwd_mac: &MacAddr, pkt: &mut IngressPacket) 
         if flags & TcpFlags::ACK != 0 {
             return handle_tcp_ack(tcp, fwd_mac, pkt);
         }
-*/
 
         Action::Forward(*fwd_mac)
     } else {

@@ -1,20 +1,13 @@
 /// Ring thread
 use std::time::{self,Duration};
 use std::thread;
-use std::sync::Arc;
-use std::cell::Cell;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use ::netmap::{self, NetmapDescriptor, RxSlot, NetmapSlot, NetmapRing, RxRing, TxRing};
+use ::netmap::{self, NetmapDescriptor, NetmapSlot, NetmapRing, RxRing, TxRing};
 use ::pnet::packet::ethernet::MutableEthernetPacket;
-use ::ForwardedPacket;
-use ::packet::{self,IngressPacket};
+use ::packet;
 use ::pnet::util::MacAddr;
 use ::util;
-use ::libc;
-use ::spsc;
 use ::packet::{Action,Reason};
 use ::metrics;
-use ::parking_lot::{Mutex,Condvar};
 
 #[derive(Debug,Default)]
 struct RingStats {
@@ -146,7 +139,7 @@ impl<'a> Worker<'a> {
 
         let mut before = time::Instant::now();
         let seconds: u32 = 5;
-        let mut rate: u32 = 0;
+        let mut _rate: u32 = 0;
         let ival = time::Duration::new(seconds as u64, 0);
 
         loop {
@@ -173,9 +166,9 @@ impl<'a> Worker<'a> {
                     metrics_client.send(&metrics);
                     Self::update_dynamic_metrics(metrics_client, &tags, seconds);
                 }
-                rate = stats.received/seconds;
+                _rate = stats.received/seconds;
                 debug!("[RX/TX#{}]: received: {}Pkts/s, dropped: {}Pkts/s, forwarded: {}Pkts/s, syn_received: {}Pkts/s, failed: {}Pkts/s",
-                            self.ring_num, rate, stats.dropped/seconds,
+                            self.ring_num, _rate, stats.dropped/seconds,
                             stats.forwarded/seconds, stats.syn_received/seconds,
                             stats.failed/seconds);
                 stats.clear();

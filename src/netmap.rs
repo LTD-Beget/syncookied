@@ -74,6 +74,7 @@ impl NetmapSlot for RxSlot {
 }
 
 impl RxSlot {
+    #[allow(dead_code)]
     #[inline]
     pub fn get_buf<'b,'a>(&'a self, ring: &RxRing) -> &'b [u8] {
         let buf_idx = self.0.buf_idx;
@@ -178,11 +179,11 @@ impl NetmapRing for RxRing {
 
     #[inline]
     fn len(&self) -> u32 {
-        let mut ret = self.0.tail - self.0.cur;
+        let mut ret: i32 = self.0.tail as i32 - self.0.cur as i32;
         if ret < 0 {
-            ret += self.0.num_slots;
+            ret += self.0.num_slots as i32;
         }
-        ret
+        ret as u32
     }
 
     #[inline]
@@ -284,11 +285,11 @@ impl NetmapRing for TxRing {
 
     #[inline]
     fn len(&self) -> u32 {
-        let mut ret = self.0.tail - self.0.cur;
+        let mut ret: i32 = self.0.tail as i32 - self.0.cur as i32;
         if ret < 0 {
-            ret += self.0.num_slots;
+            ret += self.0.num_slots as i32;
         }
-        ret
+        ret as u32
     }
 
     #[inline]
@@ -393,6 +394,7 @@ impl NetmapDescriptor {
         })
     }
 
+    #[allow(dead_code)]
     pub fn new_with_memory(iface: &str, parent: &NetmapDescriptor) -> Result<Self, NetmapError> {
         let base_nmd: netmap::nmreq = unsafe { mem::zeroed() };
         let netmap_iface = CString::new(format!("netmap:{}", iface)).unwrap();

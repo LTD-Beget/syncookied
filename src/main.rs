@@ -27,7 +27,6 @@ use std::cell::RefCell;
 use std::thread;
 use std::path::PathBuf;
 use std::time::Duration;
-use std::sync::atomic::{AtomicUsize};
 use std::sync::Arc;
 use std::net::Ipv4Addr;
 use pnet::util::MacAddr;
@@ -47,8 +46,6 @@ mod sha1;
 mod packet;
 mod csum;
 mod util;
-mod tx;
-mod rx;
 mod ring;
 mod uptime;
 mod config;
@@ -471,18 +468,16 @@ fn handle_signals(path: PathBuf, reload_lock: Arc<(Mutex<bool>, Condvar)>) {
 
 // TODO: too many parameters, put them into a struct
 fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
-       rx_mac: MacAddr, tx_mac: MacAddr,
+       rx_mac: MacAddr, _tx_mac: MacAddr,
        qlen: u32, first_cpu: usize,
        uptime_readers: Vec<(Ipv4Addr, Box<UptimeReader>)>,
        metrics_server: Option<&str>) {
     let rx_nm = Arc::new(Mutex::new(NetmapDescriptor::new(rx_iface).unwrap()));
-    let multi_if = rx_iface != tx_iface;
-    let tx_nm = if multi_if {
-         let rx_nm = &*rx_nm.lock();
-         Arc::new(Mutex::new(NetmapDescriptor::new_with_memory(tx_iface, rx_nm).unwrap()))
-     } else {
-         rx_nm.clone()
-    };
+    let tx_nm = rx_nm.clone();
+
+    if rx_iface != tx_iface {
+        panic!("This option is not implemented");
+    }
     let rx_count = {
         let rx_nm = rx_nm.lock();
         rx_nm.get_rx_rings_count()
@@ -505,13 +500,13 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
 
         scope.spawn(move || state_table_gc());
 
-        // we spawn a thread per RX/TX queue
+        // we spawn a thread per queue
         for ring in 0..rx_count {
             let ring = ring;
             let rx_nm = rx_nm.clone();
 
             scope.spawn(move || {
-                info!("Starting thread for ring {} at {}", ring, rx_iface);
+                info!("Starting RX/TX thread for ring {} at {}", ring, rx_iface);
                 let mut ring_nm = {
                     let nm = rx_nm.lock();
                     nm.clone_ring(ring, Direction::InputOutput).unwrap()
@@ -519,95 +514,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
                 let cpu = first_cpu + ring as usize;
                 ring::Worker::new(ring, cpu, &mut ring_nm, rx_mac.clone(), metrics_server).run();
             });
-/*
-            {
-                let rx_nm = rx_nm.clone();
-
-                scope.spawn(move || {
-                    info!("Starting RX thread for ring {} at {}", ring, rx_iface);
-                    let mut ring_nm = {
-                        let nm = rx_nm.lock();
-                        nm.clone_ring(ring, Direction::Input).unwrap()
-                    };
-                    let cpu = first_cpu + ring as usize;
-                    rx::Receiver::new(ring, cpu, f_tx, tx, &mut ring_nm, rx_pair, rx_mac.clone(), metrics_server).run();
-                });
-            }
-*/
-
-            /* Start an ARP thread to keep switch from forgetting about us */
-            /*
-            if multi_if && ring == 0 {
-                    let rx_nm = rx_nm.clone();
-
-                    scope.spawn(move || {
-                    info!("Starting ARP thread for ring {} at {}", ring, rx_iface);
-                    let mut ring_nm = {
-                        let nm = rx_nm.lock().unwrap();
-                        nm.clone_ring(ring, Direction::Output).unwrap()
-                    };
-                    let cpu = ring as usize;
-                    /* XXX: replace hardcoded IPs */
-                    arp::Sender::new(ring, cpu, &mut ring_nm, rx_mac.clone(), Ipv4Addr::new(185,50,25,2), Ipv4Addr::new(185,50,25,1)).run();
-                });
-            }
-            */
-
-            /* second half */
-/*
-            let f_rx = if multi_if {
-                let f_tx_nm = rx_nm.clone();
-                let pair = pair.clone();
-                scope.spawn(move || {
-                    info!("Starting TX thread for ring {} at {}", ring, rx_iface);
-                    let mut ring_nm = {
-                        let nm = f_tx_nm.lock();
-                        nm.clone_ring(ring, Direction::Output).unwrap()
-                    };
-                    let cpu = first_cpu + ring as usize; /* we assume queues/rings are bound to cpus */
-                    tx::Sender::new(ring, cpu, None, Some(f_rx), &mut ring_nm, pair, rx_mac.clone(), metrics_server).run();
-                });
-                None
-            } else {
-                Some(f_rx)
-            };
-
-            let tx_nm = tx_nm.clone();
-            scope.spawn(move || {
-                info!("Starting TX thread for ring {} at {}", ring, tx_iface);
-                let mut ring_nm = {
-                    let nm = tx_nm.lock();
-                    nm.clone_ring(ring, Direction::Output).unwrap()
-                };
-                /* We assume that in multi_if configuration
-                 *  - RX queues are bound to [first_cpu .. first_cpu + rx_count]
-                 *  - TX queues are bound to [ first_cpu + rx_count .. first_cpu + rx_count + tx_count ]
-                 */
-                let cpu = if multi_if {
-                    rx_count as usize
-                } else {
-                    0
-                } + first_cpu + ring as usize;
-                tx::Sender::new(ring, cpu, Some(rx), f_rx, &mut ring_nm, pair, tx_mac, metrics_server).run();
-            });
-*/
         }
-        /*
-        {
-            let nm = rx_nm.clone();
-            let ring = rx_count;
-
-            scope.spawn(move || {
-                    info!("Starting Host RX thread for ring {}", ring);
-                    let mut ring_nm = {
-                        let nm = nm.lock().unwrap();
-                        nm.clone_ring(ring, Direction::Input).unwrap()
-                    };
-                    host_rx_loop(ring as usize, &mut ring_nm)
-            });
-
-        }
-        */
     });
 }
 
