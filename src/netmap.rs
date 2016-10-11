@@ -145,7 +145,7 @@ impl RxRing {
 
     #[inline]
     pub fn iter(&mut self) -> RxSlotIter {
-        let cur = self.0.cur;
+        let cur = self.0.head;
         RxSlotIter {
             ring: self,
             cur: cur,
