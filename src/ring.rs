@@ -29,8 +29,7 @@ struct RingStats {
     pub dropped_invalid_tcp: u32,
     pub dropped_invalid_state: u32,
     pub forwarded: u32,
-    pub queued: u32,
-    pub overflow: u32,
+    pub syn_received: u32,
     pub sent: u32,
     pub failed: u32,
 }
@@ -72,7 +71,7 @@ impl<'a> Ring<'a> {
         ::RoutingTable::sync_tables();
     }
 
-    fn make_metrics<'t>(tags: &'t [(&'t str, &'t str)]) -> [metrics::Metric<'t>;15] {
+    fn make_metrics<'t>(tags: &'t [(&'t str, &'t str)]) -> [metrics::Metric<'t>;14] {
         use metrics::Metric;
         [
             Metric::new_with_tags("rx_pps", tags),
@@ -86,14 +85,13 @@ impl<'a> Ring<'a> {
             Metric::new_with_tags("rx_drop_bad_tcp", tags),
             Metric::new_with_tags("rx_drop_bad_state", tags),
             Metric::new_with_tags("rx_forwarded", tags),
-            Metric::new_with_tags("rx_queued", tags),
-            Metric::new_with_tags("rx_overflow", tags),
+            Metric::new_with_tags("rx_syn", tags),
             Metric::new_with_tags("tx_pps", tags),
             Metric::new_with_tags("tx_failed", tags),
         ]
     }
 
-    fn update_metrics<'t>(stats: &'t RingStats, metrics: &mut [metrics::Metric<'a>;15], seconds: u32) {
+    fn update_metrics<'t>(stats: &'t RingStats, metrics: &mut [metrics::Metric<'a>;14], seconds: u32) {
         metrics[0].set_value((stats.received / seconds) as i64);
         metrics[1].set_value((stats.dropped / seconds) as i64);
         metrics[2].set_value((stats.dropped_mac / seconds) as i64);
@@ -105,10 +103,9 @@ impl<'a> Ring<'a> {
         metrics[8].set_value((stats.dropped_invalid_tcp / seconds) as i64);
         metrics[9].set_value((stats.dropped_invalid_state / seconds) as i64);
         metrics[10].set_value((stats.forwarded / seconds) as i64);
-        metrics[11].set_value((stats.queued / seconds) as i64);
-        metrics[12].set_value((stats.overflow / seconds) as i64);
-        metrics[13].set_value((stats.sent / seconds) as i64);
-        metrics[14].set_value((stats.failed / seconds) as i64);
+        metrics[11].set_value((stats.syn_received / seconds) as i64);
+        metrics[12].set_value((stats.sent / seconds) as i64);
+        metrics[13].set_value((stats.failed / seconds) as i64);
     }
 
     fn update_dynamic_metrics(client: &metrics::Client, tags: &[(&str, &str)], seconds: u32) {
@@ -134,15 +131,16 @@ impl<'a> Ring<'a> {
         let mut metrics = Self::make_metrics(&tags[..]);
         let mut stats = RingStats::empty();
 
-        info!("RX loop for ring {:?}", self.ring_num);
+        info!("RX/TX loop for ring {:?}", self.ring_num);
         info!("Rx rings: {:?}", self.netmap.get_rx_rings());
-        util::set_thread_name(&format!("syncookied/rx{:02}", self.ring_num));
+        info!("Tx rings: {:?}", self.netmap.get_tx_rings());
+        util::set_thread_name(&format!("syncookied/{:02}", self.ring_num));
 
         util::set_cpu_prio(self.cpu, 20);
 
         /* wait for card to reinitialize */
         thread::sleep(Duration::new(1, self.ring_num as u32 * 100));
-        info!("[RX#{}] started", self.ring_num);
+        info!("[RX/TX#{}] started", self.ring_num);
 
         self.update_routing_cache();
 
@@ -176,10 +174,10 @@ impl<'a> Ring<'a> {
                     Self::update_dynamic_metrics(metrics_client, &tags, seconds);
                 }
                 rate = stats.received/seconds;
-                debug!("[RX#{}]: received: {}Pkts/s, dropped: {}Pkts/s, forwarded: {}Pkts/s, queued: {}Pkts/s, overflowed: {}Pkts/s, failed: {}Pkts/s",
+                debug!("[RX/TX#{}]: received: {}Pkts/s, dropped: {}Pkts/s, forwarded: {}Pkts/s, syn_received: {}Pkts/s, failed: {}Pkts/s",
                             self.ring_num, rate, stats.dropped/seconds,
-                            stats.forwarded/seconds, stats.queued/seconds,
-                            stats.overflow/seconds, stats.failed/seconds);
+                            stats.forwarded/seconds, stats.syn_received/seconds,
+                            stats.failed/seconds);
                 stats.clear();
                 before = time::Instant::now();
                 self.update_routing_cache();
@@ -231,8 +229,8 @@ impl<'a> Ring<'a> {
                     stats.sent += 1;
                 },
                 Action::Reply(ref packet) => {
+                    stats.syn_received += 1;
                     if let Some(len) = packet::handle_reply(packet, self.mac, tx_buf) {
-                        //debug!("[TX#{}] SENDING PACKET\n", ring_num);
                         tx_slot.set_flags(0);
                         tx_slot.set_len(len as u16);
                         stats.sent += 1;
