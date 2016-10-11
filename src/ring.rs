@@ -2,6 +2,7 @@
 use std::time::{self,Duration};
 use std::thread;
 use std::sync::Arc;
+use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use ::netmap::{self, NetmapDescriptor, RxSlot, NetmapSlot, NetmapRing, RxRing, TxRing};
 use ::pnet::packet::ethernet::MutableEthernetPacket;
@@ -16,7 +17,7 @@ use ::metrics;
 use ::parking_lot::{Mutex,Condvar};
 
 #[derive(Debug,Default)]
-struct RxStats {
+struct RingStats {
     pub received: u32,
     pub dropped: u32,
     pub dropped_mac: u32,
@@ -30,10 +31,11 @@ struct RxStats {
     pub forwarded: u32,
     pub queued: u32,
     pub overflow: u32,
+    pub sent: u32,
     pub failed: u32,
 }
 
-impl RxStats {
+impl RingStats {
     pub fn empty() -> Self {
         Default::default()
     }
@@ -47,7 +49,6 @@ impl RxStats {
 pub struct Ring<'a> {
     cpu: usize,
     netmap: &'a mut NetmapDescriptor,
-    stats: RxStats,
     mac: MacAddr,
     ring_num: u16,
     metrics_addr: Option<&'a str>,
@@ -62,7 +63,6 @@ impl<'a> Ring<'a> {
             ring_num: ring_num,
             cpu: cpu,
             netmap: netmap,
-            stats: RxStats::empty(),
             mac: mac,
             metrics_addr: metrics_addr,
         }
@@ -72,7 +72,7 @@ impl<'a> Ring<'a> {
         ::RoutingTable::sync_tables();
     }
 
-    fn make_metrics<'t>(tags: &'t [(&'t str, &'t str)]) -> [metrics::Metric<'t>;14] {
+    fn make_metrics<'t>(tags: &'t [(&'t str, &'t str)]) -> [metrics::Metric<'t>;15] {
         use metrics::Metric;
         [
             Metric::new_with_tags("rx_pps", tags),
@@ -88,11 +88,12 @@ impl<'a> Ring<'a> {
             Metric::new_with_tags("rx_forwarded", tags),
             Metric::new_with_tags("rx_queued", tags),
             Metric::new_with_tags("rx_overflow", tags),
-            Metric::new_with_tags("rx_failed", tags),
+            Metric::new_with_tags("tx_pps", tags),
+            Metric::new_with_tags("tx_failed", tags),
         ]
     }
 
-    fn update_metrics<'t>(stats: &'t RxStats, metrics: &mut [metrics::Metric<'a>;14], seconds: u32) {
+    fn update_metrics<'t>(stats: &'t RingStats, metrics: &mut [metrics::Metric<'a>;15], seconds: u32) {
         metrics[0].set_value((stats.received / seconds) as i64);
         metrics[1].set_value((stats.dropped / seconds) as i64);
         metrics[2].set_value((stats.dropped_mac / seconds) as i64);
@@ -106,7 +107,8 @@ impl<'a> Ring<'a> {
         metrics[10].set_value((stats.forwarded / seconds) as i64);
         metrics[11].set_value((stats.queued / seconds) as i64);
         metrics[12].set_value((stats.overflow / seconds) as i64);
-        metrics[13].set_value((stats.failed / seconds) as i64);
+        metrics[13].set_value((stats.sent / seconds) as i64);
+        metrics[14].set_value((stats.failed / seconds) as i64);
     }
 
     fn update_dynamic_metrics(client: &metrics::Client, tags: &[(&str, &str)], seconds: u32) {
@@ -130,6 +132,7 @@ impl<'a> Ring<'a> {
         let ifname = self.netmap.get_ifname();
         let tags = [("queue", queue.as_str()), ("host", hostname.as_str()), ("iface", ifname.as_str())];
         let mut metrics = Self::make_metrics(&tags[..]);
+        let mut stats = RingStats::empty();
 
         info!("RX loop for ring {:?}", self.ring_num);
         info!("Rx rings: {:?}", self.netmap.get_rx_rings());
@@ -164,12 +167,27 @@ impl<'a> Ring<'a> {
                 if tx_ring.is_empty() {
                     continue;
                 }
-                self.process_rings(&mut rx_ring, &mut tx_ring);
+                self.process_rings(&mut rx_ring, &mut tx_ring, &mut stats);
+            }
+            if before.elapsed() >= ival {
+                if let Some(ref metrics_client) = metrics_client {
+                    Self::update_metrics(&stats, &mut metrics, seconds);
+                    metrics_client.send(&metrics);
+                    Self::update_dynamic_metrics(metrics_client, &tags, seconds);
+                }
+                rate = stats.received/seconds;
+                debug!("[RX#{}]: received: {}Pkts/s, dropped: {}Pkts/s, forwarded: {}Pkts/s, queued: {}Pkts/s, overflowed: {}Pkts/s, failed: {}Pkts/s",
+                            self.ring_num, rate, stats.dropped/seconds,
+                            stats.forwarded/seconds, stats.queued/seconds,
+                            stats.overflow/seconds, stats.failed/seconds);
+                stats.clear();
+                before = time::Instant::now();
+                self.update_routing_cache();
             }
         }
     }
 
-    fn process_rings(&self, rx_ring: &mut RxRing, tx_ring: &mut TxRing) {
+    fn process_rings(&self, rx_ring: &mut RxRing, tx_ring: &mut TxRing, stats: &mut RingStats) {
         use std::cmp::min;
 
         let mut limit = 128;
@@ -177,8 +195,21 @@ impl<'a> Ring<'a> {
         limit = min(limit, tx_ring.len());
 
         for ((rx_slot, rx_buf), (tx_slot, tx_buf)) in rx_ring.iter().zip(tx_ring.iter()).take(limit as usize) {
+            stats.received += 1;
             match packet::handle_input(rx_buf, self.mac) {
-                Action::Drop(reason) => { println!("DROP"); },
+                Action::Drop(reason) => {
+                     stats.dropped += 1;
+                     match reason {
+                         Reason::MacNotFound => stats.dropped_mac += 1,
+                         Reason::InvalidEthernet => stats.dropped_invalid_ether += 1,
+                         Reason::IpNotFound => stats.dropped_invalid_ip += 1,
+                         Reason::Filtered => stats.dropped_filtered += 1,
+                         Reason::InvalidIp => stats.dropped_invalid_ip += 1,
+                         Reason::BadCookie => stats.dropped_bad_cookie += 1,
+                         Reason::InvalidTcp => stats.dropped_invalid_tcp += 1,
+                         Reason::StateNotFound => stats.dropped_invalid_state += 1,
+                     }
+                },
                 Action::Forward(fwd_mac) => {
                     let tx_idx = tx_slot.get_buf_idx();
                     let tx_len = tx_slot.get_len();
@@ -196,8 +227,19 @@ impl<'a> Ring<'a> {
                         eth.set_source(self.mac);
                         eth.set_destination(fwd_mac);
                     }
+                    stats.forwarded += 1;
+                    stats.sent += 1;
                 },
-                Action::Reply(packet) => { println!("REPLY"); },
+                Action::Reply(ref packet) => {
+                    if let Some(len) = packet::handle_reply(packet, self.mac, tx_buf) {
+                        //debug!("[TX#{}] SENDING PACKET\n", ring_num);
+                        tx_slot.set_flags(0);
+                        tx_slot.set_len(len as u16);
+                        stats.sent += 1;
+                    } else {
+                        stats.failed += 1;
+                    }
+                },
             }
         }
     }
