@@ -508,12 +508,8 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
         // we spawn a thread per RX/TX queue
         for ring in 0..rx_count {
             let ring = ring;
-            //let (tx, rx) = spsc::make(qlen as usize);
-            //let (f_tx, f_rx) = spsc::make(qlen as usize);
-            //let pair = Arc::new((Mutex::new(0), Condvar::new()));
-            //let rx_pair = pair.clone();
-
             let rx_nm = rx_nm.clone();
+
             scope.spawn(move || {
                 info!("Starting thread for ring {} at {}", ring, rx_iface);
                 let mut ring_nm = {
@@ -521,7 +517,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
                     nm.clone_ring(ring, Direction::InputOutput).unwrap()
                 };
                 let cpu = first_cpu + ring as usize;
-                ring::Ring::new(ring, cpu, &mut ring_nm, rx_mac.clone(), metrics_server).run();
+                ring::Worker::new(ring, cpu, &mut ring_nm, rx_mac.clone(), metrics_server).run();
             });
 /*
             {

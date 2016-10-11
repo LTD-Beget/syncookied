@@ -45,7 +45,7 @@ impl RingStats {
 
 }
 
-pub struct Ring<'a> {
+pub struct Worker<'a> {
     cpu: usize,
     netmap: &'a mut NetmapDescriptor,
     mac: MacAddr,
@@ -53,12 +53,12 @@ pub struct Ring<'a> {
     metrics_addr: Option<&'a str>,
 }
 
-impl<'a> Ring<'a> {
+impl<'a> Worker<'a> {
     pub fn new(ring_num: u16, cpu: usize,
                netmap: &'a mut NetmapDescriptor,
                mac: MacAddr,
                metrics_addr: Option<&'a str>) -> Self {
-        Ring {
+        Worker {
             ring_num: ring_num,
             cpu: cpu,
             netmap: netmap,
