@@ -1,6 +1,6 @@
 [package]
 name = "syncookied"
-version = "0.2.6"
+version = "0.2.7"
 description = "syn flood protection system"
 authors = ["Alexander Polyakov <apolyakov@beget.ru>"]
 build = "build.rs"
@@ -43,10 +43,6 @@ version = "0.1.1"
 [dependencies.pcap]
 git = "https://github.com/polachok/pcap"
 branch = "offline-bpf"
-
-[dependencies.bounded-spsc-queue]
-git = "https://github.com/polachok/bounded-spsc-queue.git"
-branch = "with"
 
 [dependencies.netmap_sys]
 version = "0.1.3"
