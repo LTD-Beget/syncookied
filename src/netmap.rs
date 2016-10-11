@@ -74,11 +74,23 @@ impl NetmapSlot for RxSlot {
 }
 
 impl RxSlot {
+    #[allow(dead_code)]
     #[inline]
     pub fn get_buf<'b,'a>(&'a self, ring: &RxRing) -> &'b [u8] {
         let buf_idx = self.0.buf_idx;
         let buf = unsafe { netmap_user::NETMAP_BUF(mem::transmute(ring), buf_idx as isize) as *const u8 };
         unsafe { slice::from_raw_parts::<u8>(buf, self.0.len as usize) }
+    }
+
+    #[inline]
+    pub fn get_buf_mut<'b,'a>(&'a self, ring: &RxRing) -> &'b mut [u8] {
+        let buf_idx = self.0.buf_idx;
+        let buf = unsafe { netmap_user::NETMAP_BUF(mem::transmute(ring), buf_idx as isize) as *mut u8 };
+        unsafe { slice::from_raw_parts_mut::<u8>(buf, self.0.len as usize) }
+    }
+
+    pub fn set_len(&mut self, len: u16) {
+        self.0.len = len;
     }
 }
 
@@ -130,6 +142,7 @@ pub trait NetmapRing {
     fn is_empty(&self) -> bool;
     fn next_slot(&mut self);
     fn set_flags(&mut self, flag: u32);
+    fn len(&self) -> u32;
 }
 
 pub struct RxRing(netmap::netmap_ring);
@@ -145,7 +158,7 @@ impl RxRing {
 
     #[inline]
     pub fn iter(&mut self) -> RxSlotIter {
-        let cur = self.0.cur;
+        let cur = self.0.head;
         RxSlotIter {
             ring: self,
             cur: cur,
@@ -162,6 +175,15 @@ impl NetmapRing for RxRing {
     #[inline]
     fn is_empty(&self) -> bool {
         self.0.cur == self.0.tail
+    }
+
+    #[inline]
+    fn len(&self) -> u32 {
+        let mut ret: i32 = self.0.tail as i32 - self.0.cur as i32;
+        if ret < 0 {
+            ret += self.0.num_slots as i32;
+        }
+        ret as u32
     }
 
     #[inline]
@@ -182,7 +204,7 @@ pub struct RxSlotIter<'a> {
 }
 
 impl<'a> Iterator for RxSlotIter<'a> {
-    type Item = (&'a mut RxSlot, &'a [u8]);
+    type Item = (&'a mut RxSlot, &'a mut [u8]);
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
@@ -194,7 +216,7 @@ impl<'a> Iterator for RxSlotIter<'a> {
         let cur = self.cur;
         let slots = self.ring.0.slot.as_mut_ptr();
         let slot: &mut RxSlot = unsafe { mem::transmute(slots.offset(cur as isize)) };
-        let buf = slot.get_buf(self.ring);
+        let buf = slot.get_buf_mut(self.ring);
         self.cur = if self.cur + 1 == self.ring.0.num_slots { 0 } else { self.cur + 1 };
         Some((slot, buf))
     }
@@ -242,7 +264,7 @@ impl TxRing {
 
     #[inline]
     pub fn iter(&mut self) -> TxSlotIter {
-        let cur = self.0.cur;
+        let cur = self.0.head;
         TxSlotIter {
             ring: self,
             cur: cur,
@@ -259,6 +281,15 @@ impl NetmapRing for TxRing {
     #[inline]
     fn is_empty(&self) -> bool {
         self.0.cur == self.0.tail
+    }
+
+    #[inline]
+    fn len(&self) -> u32 {
+        let mut ret: i32 = self.0.tail as i32 - self.0.cur as i32;
+        if ret < 0 {
+            ret += self.0.num_slots as i32;
+        }
+        ret as u32
     }
 
     #[inline]
@@ -363,6 +394,7 @@ impl NetmapDescriptor {
         })
     }
 
+    #[allow(dead_code)]
     pub fn new_with_memory(iface: &str, parent: &NetmapDescriptor) -> Result<Self, NetmapError> {
         let base_nmd: netmap::nmreq = unsafe { mem::zeroed() };
         let netmap_iface = CString::new(format!("netmap:{}", iface)).unwrap();
@@ -387,7 +419,7 @@ impl NetmapDescriptor {
         }
     }
 
-    pub fn rx_iter<'i, 'd: 'i>(&'d mut self) -> RxRingIter<'i> {
+    pub fn rx_iter<'i, 'd: 'i>(&'d self) -> RxRingIter<'i> {
         let (first, last) = self.get_rx_rings();
 
         RxRingIter {
@@ -397,7 +429,7 @@ impl NetmapDescriptor {
         }
     }
 
-    pub fn tx_iter<'i, 'd: 'i>(&'d mut self) -> TxRingIter<'i> {
+    pub fn tx_iter<'i, 'd: 'i>(&'d self) -> TxRingIter<'i> {
         let (first, last) = self.get_tx_rings();
 
         TxRingIter {
@@ -506,7 +538,7 @@ impl NetmapDescriptor {
     }
     */
 
-    pub fn poll(&mut self, dir: Direction) -> Option<()> {
+    pub fn poll(&mut self, dir: Direction) -> Option<Direction> {
         let fd = unsafe { (*self.raw).fd };
         let mut pollfd: libc::pollfd = unsafe { mem::zeroed() };
 
@@ -525,6 +557,15 @@ impl NetmapDescriptor {
             error!("POLLERR!");
             return None;
         }
-        Some(())
+        if pollfd.revents & (libc::POLLIN | libc::POLLOUT) != 0 {
+            return Some(Direction::InputOutput);
+        }
+        if pollfd.revents & libc::POLLIN != 0 {
+            return Some(Direction::Input);
+        }
+        if pollfd.revents & libc::POLLOUT != 0 {
+            return Some(Direction::Output);
+        }
+        None
     }
 }
