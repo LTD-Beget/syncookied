@@ -56,7 +56,7 @@ impl UptimeReader for UdpReader {
         try!(socket.set_write_timeout(Some(timeout)));
         loop {
             debug!("[uptime] [{}] sending tcp secret request", self.addr);
-            socket.send_to(b"YO", self.addr).unwrap();
+            try!(socket.send_to(b"YO", self.addr));
             if let Ok(..) = socket.recv_from(&mut buf[0..]) {
                 debug!("[uptime] [{}] response received", self.addr);
                 return Ok(buf);
@@ -213,37 +213,40 @@ impl Server<TcpListener> {
 
     pub fn run(&mut self) -> ! {
         loop {
-            let mut buf = [0; 64];
-            let timeout = Duration::new(3, 0);
+            if let Ok((mut sock, sa)) = self.sock.accept() {
+                self.enable_cookies();
 
-            if let Ok((mut sock, _)) = self.sock.accept() {
-                'conn: loop {
-                    let _ = sock.set_read_timeout(Some(timeout));
-                    let _ = sock.set_write_timeout(Some(timeout));
+                thread::spawn(move || {
+                    debug!("Incoming connection from {:?}", sa);
+                    'conn: loop {
+                        let timeout = Duration::new(5, 0);
 
-                    if let Ok(len) = sock.read(&mut buf) {
-                        if len < 2 {
-                            continue;
+                        let _ = sock.set_read_timeout(Some(timeout));
+                        let _ = sock.set_write_timeout(Some(timeout));
+
+                        let mut buf = [0; 64];
+                        if let Ok(len) = sock.read(&mut buf) {
+                            if len < 2 {
+                                continue;
+                            }
+                        } else {
+                            break 'conn;
                         }
-                    } else {
-                        break 'conn;
-                    }
 
-                    self.enable_cookies();
-
-                    match LocalReader.read() {
-                        Ok(buf) => {
-                            match sock.write(&buf[..]) {
-                                Ok(_) => {},
-                                Err(e) => {
-                                    error!("Error sending: {}\n", e);
-                                    break 'conn;
+                        match LocalReader.read() {
+                            Ok(buf) => {
+                                match sock.write(&buf[..]) {
+                                    Ok(_) => {},
+                                    Err(e) => {
+                                        error!("Error sending: {}\n", e);
+                                        break 'conn;
+                                    }
                                 }
                             }
+                            Err(e) => error!("Error reading /proc/tcp_secrets: {}", e),
                         }
-                        Err(e) => error!("Error reading /proc/tcp_secrets: {}", e),
                     }
-                }
+                });
             }
         }
     }
