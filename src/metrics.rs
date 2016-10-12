@@ -35,7 +35,7 @@ impl<'a> Metric<'a> {
     pub fn new_with_tags(name: &'a str, tags: &'a [(&'a str, &'a str)]) -> Metric<'a> {
         let mut m = Measurement::new(name);
 
-        for &(ref key, ref val) in tags {
+        for &(key, val) in tags {
             m.add_tag(key, val);
         }
         Metric { inner: m }

@@ -88,20 +88,18 @@ impl Default for IngressPacket {
 pub fn dump_input(packet_data: &[u8]) {
     let eth = EthernetPacket::new(packet_data).unwrap();
     println!("{:?}", &eth);
-    match eth.get_ethertype() {
-        EtherTypes::Ipv4 => {
-            let ipv4 = Ipv4Packet::new(eth.payload()).unwrap();
-            println!("{:?}", ipv4);
-            match ipv4.get_next_level_protocol() {
-                IpNextHeaderProtocols::Tcp  => {
-                    let tcp = TcpPacket::new(ipv4.payload()).unwrap();
-                    println!("{:?}", tcp);
-                },
-                _ => {},
-            }
-        },
-        _ => {},
-    };
+    
+    if let EtherTypes::Ipv4 = eth.get_ethertype() {
+        let ipv4 = Ipv4Packet::new(eth.payload()).unwrap();
+        println!("{:?}", ipv4);
+        match ipv4.get_next_level_protocol() {
+            IpNextHeaderProtocols::Tcp  => {
+                let tcp = TcpPacket::new(ipv4.payload()).unwrap();
+                println!("{:?}", tcp);
+            },
+            _ => {},
+        }
+    }
 }
 
 // main input handler
@@ -174,7 +172,7 @@ fn handle_transport_protocol(protocol: IpNextHeaderProtocol, packet: &[u8],
                              fwd_mac: &MacAddr,
                              pkt: &mut IngressPacket) -> Action {
     if let IpNextHeaderProtocols::Tcp = protocol {
-        handle_tcp_packet(packet, &fwd_mac, pkt)
+        handle_tcp_packet(packet, fwd_mac, pkt)
     } else {
         Action::Forward(*fwd_mac)
     }
@@ -194,7 +192,7 @@ fn handle_tcp_syn(tcp: TcpPacket, pkt: &mut IngressPacket) -> Action {
         }
     }
     pkt.tcp_mss = 1460; /* HACK */
-    return Action::Reply(IngressPacket::default());
+    Action::Reply(IngressPacket::default())
 }
 
 #[inline]

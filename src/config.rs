@@ -101,7 +101,7 @@ impl ConfigLoader {
 
     pub fn load(&self) -> Result<Vec<HostConfig>, ConfigLoadingError> {
         let mut res = vec![];
-        for doc in self.root.iter() {
+        for doc in &self.root {
             let doc = try!(self.parse_doc(doc));
             res.extend_from_slice(&doc);
         }

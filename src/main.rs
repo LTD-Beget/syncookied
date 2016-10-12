@@ -92,7 +92,7 @@ impl fmt::Debug for StateTable {
         fn decode_val(v: usize) -> ConnState {
             ConnState::from((v & 0xffffffff) - 1)
         }
-        for entry in entries.iter() {
+        for entry in &entries {
             try!(write!(f, "{:?} -> {:?}\n", decode_key(entry.0), decode_val(entry.1)));
         }
         write!(f, "StateTable: {} entries\n", self.map.len())
@@ -181,7 +181,7 @@ impl RoutingTable {
             let mut cache = rt.borrow_mut();
 
             // merge configurations
-            for ip in ips.iter() {
+            for ip in &ips {
                 ::RoutingTable::with_host_config_global(*ip, |hc| {
                     match cache.entry(*ip) {
                         Entry::Vacant(ve) => {
@@ -196,7 +196,7 @@ impl RoutingTable {
             }
             // remove extra keys
             let ips: Vec<Ipv4Addr> = cache.keys().cloned().collect();
-            for ip in ips.iter() {
+            for ip in &ips {
                 if ::RoutingTable::with_host_config_global(*ip, |_| {}).is_none() {
                     cache.remove(ip);
                 }
@@ -209,7 +209,7 @@ impl RoutingTable {
         LOCAL_ROUTING_TABLE.with(|rt| {
             for ip in ips {
                 let r = rt.borrow();
-                if let Some(ref hc) = r.get(&ip) {
+                if let Some(hc) = r.get(&ip) {
                     println!("[{}] {:?}", ip, hc.state_table);
                 }
             }
@@ -311,7 +311,7 @@ impl Clone for HostConfiguration {
             tcp_timestamp: self.tcp_timestamp,
             tcp_cookie_time: self.tcp_cookie_time,
             hz: self.hz,
-            syncookie_secret: self.syncookie_secret.clone(),
+            syncookie_secret: self.syncookie_secret,
             state_table: self.state_table.clone(),
             filters: self.filters.clone(),
             default: self.default,
@@ -337,7 +337,7 @@ pub enum OutgoingPacket {
 fn run_uptime_readers(reload_lock: Arc<(Mutex<bool>, Condvar)>, uptime_readers: Vec<(Ipv4Addr, Box<UptimeReader>)>) {
     let one_sec = Duration::new(1, 0);
     crossbeam::scope(|scope| {
-        for (ip, mut uptime_reader) in uptime_readers.into_iter() {
+        for (ip, mut uptime_reader) in uptime_readers {
             let reload_lock = reload_lock.clone();
             info!("Uptime reader for {} starting", ip);
             scope.spawn(move || loop {
@@ -499,7 +499,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
         scope.spawn(move ||
                     run_uptime_readers(reload_lock.clone(), uptime_readers));
 
-        scope.spawn(move || state_table_gc());
+        scope.spawn(state_table_gc);
 
         // we spawn a thread per queue
         for ring in 0..rx_count {
@@ -513,7 +513,7 @@ fn run(config: PathBuf, rx_iface: &str, tx_iface: &str,
                     nm.clone_ring(ring, Direction::InputOutput).unwrap()
                 };
                 let cpu = first_cpu + ring as usize;
-                ring::Worker::new(ring, cpu, &mut ring_nm, rx_mac.clone(), metrics_server).run();
+                ring::Worker::new(ring, cpu, &mut ring_nm, rx_mac, metrics_server).run();
             });
         }
     });
@@ -604,7 +604,7 @@ fn main() {
         let tx_mac: MacAddr = matches.value_of("out-mac")
                                 .map(str::to_owned)
                                 .or_else(|| util::get_iface_mac(tx_iface).ok())
-                                .map(|mac| MacAddr::from_str(&mac).expect("Expected valid mac")).unwrap_or(rx_mac.clone());
+                                .map(|mac| MacAddr::from_str(&mac).expect("Expected valid mac")).unwrap_or(rx_mac);
         let ncpus = util::get_cpu_count();
         let qlen = matches.value_of("qlen")
                           .map(|x| u32::from_str(x).expect("Expected number for queue length"))
@@ -622,7 +622,7 @@ fn main() {
                 debug!("Config file {} loaded", config_path.display());
                 let uptime_readers = config;
                 info!("interfaces: [Rx: {}/{}, Tx: {}/{}] Cores: {}", rx_iface, rx_mac, tx_iface, tx_mac, ncpus);
-                run(config_path, &rx_iface, &tx_iface, rx_mac, tx_mac, qlen, cpu, uptime_readers, metrics_server);
+                run(config_path, rx_iface, tx_iface, rx_mac, tx_mac, qlen, cpu, uptime_readers, metrics_server);
             },
             Err(e) => error!("Error parsing config file {}: {:?}", config_path.display(), e),
         }

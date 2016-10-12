@@ -244,7 +244,7 @@ impl<'d> Iterator for RxRingIter<'d> {
             return None;
         }
         let rx_ring = {
-            let cur = self.cur.clone();
+            let cur = self.cur;
             self.netmap.get_rx_ring(cur)
         };
         self.cur += 1;
@@ -386,7 +386,7 @@ impl NetmapDescriptor {
         let netmap_iface = CString::new(format!("netmap:{}", iface)).unwrap();
 
         let netmap_desc = unsafe { netmap_user::nm_open(netmap_iface.as_ptr(), &base_nmd, 0, ptr::null()) };
-        if netmap_desc == ptr::null_mut() {
+        if netmap_desc.is_null() {
             return Err(NetmapError::new(format!("Can't open {:?}", netmap_iface)));
         }
         Ok(NetmapDescriptor {
@@ -400,7 +400,7 @@ impl NetmapDescriptor {
         let netmap_iface = CString::new(format!("netmap:{}", iface)).unwrap();
 
         let netmap_desc = unsafe { netmap_user::nm_open(netmap_iface.as_ptr(), &base_nmd, netmap_user::NM_OPEN_NO_MMAP as u64, parent.raw) };
-        if netmap_desc == ptr::null_mut() {
+        if netmap_desc.is_null() {
             return Err(NetmapError::new(format!("Can't open {:?}", netmap_iface)));
         }
         Ok(NetmapDescriptor {
