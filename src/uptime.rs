@@ -56,7 +56,7 @@ impl UptimeReader for UdpReader {
         try!(socket.set_write_timeout(Some(timeout)));
         loop {
             debug!("[uptime] [{}] sending tcp secret request", self.addr);
-            socket.send_to(b"YO", self.addr).unwrap();
+            try!(socket.send_to(b"YO", self.addr));
             if let Ok(..) = socket.recv_from(&mut buf[0..]) {
                 debug!("[uptime] [{}] response received", self.addr);
                 return Ok(buf);
@@ -99,21 +99,29 @@ impl TcpReader {
 
 impl UptimeReader for TcpReader {
     fn read(&mut self) -> io::Result<Vec<u8>> {
-        let mut buf = vec![0;1024];
-        let addr = self.addr.clone();
-        let socket = self.stream();
+        match (|| {
+            let mut buf = vec![0;1024];
+            let addr = self.addr.clone();
+            let socket = self.stream();
 
-        let timeout = Duration::new(1, 0);
-        try!(socket.set_read_timeout(Some(timeout)));
-        try!(socket.set_write_timeout(Some(timeout)));
+            let timeout = Duration::new(3, 0);
+            try!(socket.set_read_timeout(Some(timeout)));
+            try!(socket.set_write_timeout(Some(timeout)));
 
-        loop {
-            debug!("[uptime] [{}] sending tcp secret request", addr);
-            socket.write(b"YO").unwrap();
-            if let Ok(..) = socket.read(&mut buf[0..]) {
-                debug!("[uptime] [{}] response received", addr);
-                return Ok(buf);
+            loop {
+                debug!("[uptime] [{}] sending tcp secret request", addr);
+                try!(socket.write(b"YO"));
+                if let Ok(..) = socket.read(&mut buf[0..]) {
+                    debug!("[uptime] [{}] response received", addr);
+                    return Ok(buf);
+                }
             }
+        })() {
+            Ok(buf) => Ok(buf),
+            Err(e) => {
+                self.sock = None;
+                Err(e)
+            },
         }
     }
 }
@@ -121,7 +129,7 @@ impl UptimeReader for TcpReader {
 // TODO: parser should probably be split into
 // its own function
 /// parses tcp_secrets and updates global table
-pub fn update(ip: Ipv4Addr, buf: Vec<u8>) {
+pub fn update(ip: Ipv4Addr, buf: Vec<u8>) -> Result<(),Box<::std::error::Error>> {
     use std::io::prelude::*;
     use std::io::BufReader;
 
@@ -133,14 +141,14 @@ pub fn update(ip: Ipv4Addr, buf: Vec<u8>) {
     debug!("[uptime] [{}] Updating secrets", &ip);
     let reader = BufReader::new(&buf[..]);
     for (idx, line) in reader.lines().enumerate() {
-        let line = line.unwrap();
+        let line = try!(line);
         match idx {
             0 => {
                 for (idx, word) in line.split(' ').enumerate() {
                     match idx {
-                        0 => { jiffies = word.parse::<u64>().unwrap() },
-                        1 => { tcp_cookie_time = word.parse::<u32>().unwrap() },
-                        2 => { hz = word.parse::<u32>().unwrap() },
+                        0 => { jiffies = try!(word.parse::<u64>()) },
+                        1 => { tcp_cookie_time = try!(word.parse::<u32>()) },
+                        2 => { hz = try!(word.parse::<u32>()) },
                         _ => {},
                     }
                 }
@@ -150,7 +158,7 @@ pub fn update(ip: Ipv4Addr, buf: Vec<u8>) {
                     if word == "" {
                         continue;
                     }
-                    syncookie_secret[0][idx] = u32::from_str_radix(word, 16).unwrap();
+                    syncookie_secret[0][idx] = try!(u32::from_str_radix(word, 16));
                 }
             },
             2 => {
@@ -158,7 +166,7 @@ pub fn update(ip: Ipv4Addr, buf: Vec<u8>) {
                     if word == "" {
                         continue;
                     }
-                    syncookie_secret[1][idx] = u32::from_str_radix(word, 16).unwrap();
+                    syncookie_secret[1][idx] = try!(u32::from_str_radix(word, 16));
                 }
             },
             _ => {},
@@ -176,6 +184,7 @@ pub fn update(ip: Ipv4Addr, buf: Vec<u8>) {
         }
         debug!("[uptime] [{}] updated secrets {}/{}, [{:?}]", &ip, jiffies, tcp_cookie_time, &hc.syncookie_secret[0][0..8]);
     });
+    Ok(())
 }
 
 struct Server<T> {
@@ -203,33 +212,41 @@ impl Server<TcpListener> {
     }
 
     pub fn run(&mut self) -> ! {
-        let timeout = Duration::new(1, 0);
-
         loop {
-            let mut buf = [0; 64];
-            if let Ok((mut sock, _)) = self.sock.accept() {
-                let _ = sock.set_read_timeout(Some(timeout));
-                let _ = sock.set_write_timeout(Some(timeout));
-
-                if let Ok(len) = sock.read(&mut buf) {
-                    if len < 2 {
-                        continue;
-                    }
-                } else {
-                    continue;
-                }
-
+            if let Ok((mut sock, sa)) = self.sock.accept() {
                 self.enable_cookies();
 
-                match LocalReader.read() {
-                    Ok(buf) => {
-                        match sock.write(&buf[..]) {
-                            Ok(_) => {},
-                            Err(e) => error!("Error sending: {}\n", e),
+                thread::spawn(move || {
+                    debug!("Incoming connection from {:?}", sa);
+                    'conn: loop {
+                        let timeout = Duration::new(5, 0);
+
+                        let _ = sock.set_read_timeout(Some(timeout));
+                        let _ = sock.set_write_timeout(Some(timeout));
+
+                        let mut buf = [0; 64];
+                        if let Ok(len) = sock.read(&mut buf) {
+                            if len < 2 {
+                                continue;
+                            }
+                        } else {
+                            break 'conn;
+                        }
+
+                        match LocalReader.read() {
+                            Ok(buf) => {
+                                match sock.write(&buf[..]) {
+                                    Ok(_) => {},
+                                    Err(e) => {
+                                        error!("Error sending: {}\n", e);
+                                        break 'conn;
+                                    }
+                                }
+                            }
+                            Err(e) => error!("Error reading /proc/tcp_secrets: {}", e),
                         }
                     }
-                    Err(e) => error!("Error reading /proc/tcp_secrets: {}", e),
-                }
+                });
             }
         }
     }

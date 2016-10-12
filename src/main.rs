@@ -343,7 +343,9 @@ fn run_uptime_readers(reload_lock: Arc<(Mutex<bool>, Condvar)>, uptime_readers: 
             scope.spawn(move || loop {
                 ::util::set_thread_name(&format!("syncookied/{}", ip));
                 match uptime_reader.read() {
-                    Ok(buf) => uptime::update(ip, buf),
+                    Ok(buf) => if let Err(err) = uptime::update(ip, buf) {
+                        error!("Failed to parse uptime: {:?}", err);
+                    },
                     Err(err) => error!("Failed to read uptime: {:?}", err),
                 }
                 thread::sleep(one_sec);
