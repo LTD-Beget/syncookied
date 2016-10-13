@@ -101,7 +101,7 @@ impl UptimeReader for TcpReader {
     fn read(&mut self) -> io::Result<Vec<u8>> {
         match (|| {
             let mut buf = vec![0;1024];
-            let addr = self.addr.clone();
+            let addr = self.addr;
             let socket = self.stream();
 
             let timeout = Duration::new(3, 0);
@@ -128,7 +128,7 @@ impl UptimeReader for TcpReader {
 
 // TODO: parser should probably be split into
 // its own function
-/// parses tcp_secrets and updates global table
+/// parses received tcp secrets and updates global table
 pub fn update(ip: Ipv4Addr, buf: Vec<u8>) -> Result<(),Box<::std::error::Error>> {
     use std::io::prelude::*;
     use std::io::BufReader;
