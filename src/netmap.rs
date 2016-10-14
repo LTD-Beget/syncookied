@@ -22,7 +22,7 @@ pub use self::netmap_sys::netmap::NS_REPORT;
 /// Enable forwarding on ring
 pub use self::netmap_sys::netmap::NR_FORWARD;
 
-#[derive(Debug)]
+#[derive(Debug,Copy,Clone)]
 #[allow(dead_code)]
 pub enum Direction {
     Input,

@@ -60,7 +60,7 @@ impl<'a> Worker<'a> {
         }
     }
 
-    fn update_routing_cache(&mut self) {
+    fn update_routing_cache(&self) {
         ::RoutingTable::sync_tables();
     }
 
@@ -139,11 +139,12 @@ impl<'a> Worker<'a> {
 
         let mut before = time::Instant::now();
         let seconds: u32 = 5;
-        let mut _rate: u32 = 0;
+        let mut rate: u32 = 0;
         let ival = time::Duration::new(seconds as u64, 0);
 
+        let mut flags = netmap::Direction::InputOutput;
         loop {
-            if let Some(_) = self.netmap.poll(netmap::Direction::InputOutput) {
+            if let Some(_) = self.netmap.poll(flags) {
                 let mut rx_ring = {
                     let mut rx_iter = self.netmap.rx_iter();
                     rx_iter.next().unwrap()
@@ -152,11 +153,23 @@ impl<'a> Worker<'a> {
                     let mut tx_iter = self.netmap.tx_iter();
                     tx_iter.next().unwrap()
                 };
-                if rx_ring.is_empty() {
+                let rx_empty = rx_ring.is_empty();
+                let tx_empty = tx_ring.is_empty();
+
+                if rx_empty && tx_empty {
+                    flags = netmap::Direction::InputOutput;
                     continue;
                 }
-                if tx_ring.is_empty() {
+                if rx_empty {
+                    flags = netmap::Direction::Input;
                     continue;
+                }
+                if tx_empty {
+                    flags = netmap::Direction::Output;
+                    continue;
+                }
+                if rate < 100 {
+                    self.update_routing_cache();
                 }
                 self.process_rings(&mut rx_ring, &mut tx_ring, &mut stats);
             }
@@ -166,9 +179,9 @@ impl<'a> Worker<'a> {
                     metrics_client.send(&metrics);
                     Self::update_dynamic_metrics(metrics_client, &tags, seconds);
                 }
-                _rate = stats.received/seconds;
+                rate = stats.received/seconds;
                 debug!("[RX/TX#{}]: received: {}Pkts/s, dropped: {}Pkts/s, forwarded: {}Pkts/s, syn_received: {}Pkts/s, failed: {}Pkts/s",
-                            self.ring_num, _rate, stats.dropped/seconds,
+                            self.ring_num, rate, stats.dropped/seconds,
                             stats.forwarded/seconds, stats.syn_received/seconds,
                             stats.failed/seconds);
                 stats.clear();
