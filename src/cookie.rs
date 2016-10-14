@@ -137,7 +137,7 @@ fn test_cookie_init() {
 
 /// TCP options encoded in timestamp
 #[inline]
-pub fn synproxy_init_timestamp_cookie(wscale: u8, sperm: u8, ecn: u8, tcp_time_stamp: u32) -> u32 {
+pub fn synproxy_init_timestamp_cookie(wscale: u8, sperm: bool, ecn: bool, tcp_time_stamp: u32) -> u32 {
     let mut tsval: u32 = tcp_time_stamp & !0x3f;
     let mut options: u32 = 0;
 
@@ -147,11 +147,11 @@ pub fn synproxy_init_timestamp_cookie(wscale: u8, sperm: u8, ecn: u8, tcp_time_s
         options |= 0xf;
     }
 
-    if sperm != 0 {
+    if sperm {
         options |= 1 << 4;
     }
 
-    if ecn != 0 {
+    if ecn {
         options |= 1 << 5;
     }
 

@@ -37,6 +37,9 @@ lazy_static! {
                 tcp_timestamp: [0, 0, 0, 0],
                 tcp_sequence: 0,
                 tcp_mss: 1460,
+                tcp_wscale: 7,
+                tcp_ecn: true,
+                tcp_sack: true,
             };
             build_reply(&pkt, MacAddr::new(0, 0, 0, 0, 0, 0), &mut data);
         }
@@ -73,7 +76,11 @@ pub struct IngressPacket {
     pub tcp_destination: u16,
     pub tcp_timestamp: [u8;4],
     pub tcp_sequence: u32,
-    pub tcp_mss: u16
+    pub tcp_mss: u16,
+
+    pub tcp_wscale: u8,
+    pub tcp_sack: bool,
+    pub tcp_ecn: bool,
 }
 
 impl Default for IngressPacket {
@@ -184,14 +191,27 @@ fn handle_tcp_syn(tcp: TcpPacket, pkt: &mut IngressPacket) -> Action {
     pkt.tcp_source = tcp.get_source();
     pkt.tcp_destination = tcp.get_destination();
     pkt.tcp_sequence = tcp.get_sequence();
+    pkt.tcp_ecn = tcp.get_flags() & TcpFlags::ECE != 0;
     if tcp.get_data_offset() > 5 {
-        let in_options = tcp.get_options_iter();
-        if let Some(ts_option) = in_options.filter(|opt| (*opt).get_number() == TcpOptionNumbers::TIMESTAMPS).nth(0) {
-            pkt.tcp_timestamp[0..4].copy_from_slice(&ts_option.payload()[0..4]);
-            //unsafe { ptr::copy_nonoverlapping::<u8>(ts_option.payload()[0..4].as_ptr(), pkt.tcp_timestamp.as_mut_ptr(), 4) };
+        let options = tcp.get_options_iter();
+        for option in options {
+            match option.get_number() {
+                TcpOptionNumbers::TIMESTAMPS => 
+                    pkt.tcp_timestamp[0..4].copy_from_slice(&option.payload()[0..4]),
+                TcpOptionNumbers::MSS => {
+                    let payload = option.payload();
+                    pkt.tcp_mss = (payload[0] as u16) << 8 | payload[1] as u16;
+                },
+                TcpOptionNumbers::WSCALE => {
+                    pkt.tcp_wscale = option.payload()[0];
+                },
+                TcpOptionNumbers::SACK_PERMITTED => {
+                    pkt.tcp_sack = true;
+                },
+                _ => {},
+            }
         }
     }
-    pkt.tcp_mss = 1460; /* HACK */
     Action::Reply(IngressPacket::default())
 }
 
@@ -404,7 +424,7 @@ fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) 
             secret[0].copy_from_slice(&hc.syncookie_secret[0][0..17]);
             secret[1].copy_from_slice(&hc.syncookie_secret[1][0..17]);
         });
-        let (seq_num, _mss_val) = cookie::generate_cookie_init_sequence(
+        let (seq_num, mss_val) = cookie::generate_cookie_init_sequence(
             pkt.ipv4_source, pkt.ipv4_destination,
             pkt.tcp_source, pkt.tcp_destination, pkt.tcp_sequence,
             pkt.tcp_mss, cookie_time, &secret);
@@ -417,13 +437,19 @@ fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) 
 
         {
             let options = tcp.get_options_raw_mut();
+            {
+                let mut mss = try_opt!(MutableTcpOptionPacket::new(&mut options[0..4]));
+                let mss_payload = mss.payload_mut();
+                mss_payload[0] = (mss_val >> 8) as u8;
+                mss_payload[1] = (mss_val & 0xff) as u8;
+            }
             { /* Timestamp */
                 let mut ts = try_opt!(MutableTcpOptionPacket::new(&mut options[6..16]));
                 //ts.set_number(TcpOptionNumbers::TIMESTAMPS);
                 //ts.get_length_raw_mut()[0] = 10;
                 let mut stamps = ts.payload_mut();
                 /* TODO: replace hard coded values */
-                stamps[0..4].copy_from_slice(&u32_to_oct(cookie::synproxy_init_timestamp_cookie(7, 1, 0, my_tcp_time))[0..4]);
+                stamps[0..4].copy_from_slice(&u32_to_oct(cookie::synproxy_init_timestamp_cookie(pkt.tcp_wscale, pkt.tcp_sack, pkt.tcp_ecn, my_tcp_time))[0..4]);
                 stamps[4..8].copy_from_slice(&pkt.tcp_timestamp[0..4]);
             }
         }
@@ -527,7 +553,7 @@ fn build_reply(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> us
                 ts.get_length_raw_mut()[0] = 10;
                 let mut stamps = ts.payload_mut();
                 unsafe {
-                    ptr::copy_nonoverlapping::<u8>(u32_to_oct(cookie::synproxy_init_timestamp_cookie(7, 1, 0, my_tcp_time)).as_ptr(), stamps[..].as_mut_ptr(), 4);
+                    ptr::copy_nonoverlapping::<u8>(u32_to_oct(cookie::synproxy_init_timestamp_cookie(pkt.tcp_wscale, pkt.tcp_sack, pkt.tcp_ecn, my_tcp_time)).as_ptr(), stamps[..].as_mut_ptr(), 4);
                     ptr::copy_nonoverlapping::<u8>(pkt.tcp_timestamp.as_ptr(), stamps[4..].as_mut_ptr(), 4);
                 }
             }
