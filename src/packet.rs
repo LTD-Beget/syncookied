@@ -7,7 +7,7 @@ use pnet::packet::Packet;
 use pnet::packet::ethernet::{EthernetPacket, MutableEthernetPacket, EtherTypes};
 use pnet::packet::arp::{MutableArpPacket, ArpOperations, ArpHardwareTypes};
 use pnet::packet::ip::{IpNextHeaderProtocol, IpNextHeaderProtocols};
-use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet};
+use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet, Ipv4Flags};
 use pnet::packet::tcp::{TcpPacket, MutableTcpPacket, MutableTcpOptionPacket, TcpOptionNumbers, TcpFlags};
 use pnet::packet::MutablePacket;
 use pnet::packet::PacketSize;
@@ -19,13 +19,14 @@ use ::filter;
 use ::filter::FilterAction;
 use ::ConnState;
 
-pub const MIN_REPLY_BUF_LEN: usize = 74;
+const MIN_REPLY_BUF_LEN_TS: usize = 74;
+const MIN_REPLY_BUF_LEN: usize = 58;
 
 lazy_static! {
     /// Some fields don't change ever so we just copy this template and then
     /// overwrite changed fields (see build_reply_with_template)
-    static ref REPLY_TEMPLATE: [u8;MIN_REPLY_BUF_LEN] = {
-        let mut data = [0;MIN_REPLY_BUF_LEN];
+    static ref REPLY_TEMPLATE: [u8;MIN_REPLY_BUF_LEN_TS] = {
+        let mut data = [0;MIN_REPLY_BUF_LEN_TS];
         /* prepare data common to all packets beforehand */
         {
             let pkt = IngressPacket {
@@ -40,6 +41,7 @@ lazy_static! {
                 tcp_wscale: 7,
                 tcp_ecn: true,
                 tcp_sack: true,
+                tcp_has_ts: true,
             };
             build_reply(&pkt, MacAddr::new(0, 0, 0, 0, 0, 0), &mut data);
         }
@@ -47,7 +49,7 @@ lazy_static! {
     };
 }
 
-#[derive(Debug)]
+#[derive(Debug,PartialEq,Eq)]
 pub enum Reason {
     MacNotFound,
     InvalidEthernet,
@@ -81,6 +83,7 @@ pub struct IngressPacket {
     pub tcp_wscale: u8,
     pub tcp_sack: bool,
     pub tcp_ecn: bool,
+    pub tcp_has_ts: bool,
 }
 
 impl Default for IngressPacket {
@@ -145,6 +148,9 @@ fn handle_ipv4_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket) -> Act
     if let Some(header) = header {
         pkt.ipv4_source = header.get_source();
         pkt.ipv4_destination = header.get_destination();
+        if header.get_flags() & Ipv4Flags::MoreFragments != 0 {
+            println!("{} -> {}: more fragments set", pkt.ipv4_source, pkt.ipv4_destination);
+        }
         let mut fwd_mac = MacAddr::new(0xff, 0xff, 0xff, 0xff, 0xff, 0xff);
         let mut filter_action = None;
         let mut passthrough = false;
@@ -192,12 +198,20 @@ fn handle_tcp_syn(tcp: TcpPacket, pkt: &mut IngressPacket) -> Action {
     pkt.tcp_destination = tcp.get_destination();
     pkt.tcp_sequence = tcp.get_sequence();
     pkt.tcp_ecn = tcp.get_flags() & TcpFlags::ECE != 0;
+
+    pkt.tcp_has_ts = false;
+    pkt.tcp_mss = 1460;
+    pkt.tcp_wscale = 8;
+    pkt.tcp_sack = false;
+
     if tcp.get_data_offset() > 5 {
         let options = tcp.get_options_iter();
         for option in options {
             match option.get_number() {
-                TcpOptionNumbers::TIMESTAMPS => 
-                    pkt.tcp_timestamp[0..4].copy_from_slice(&option.payload()[0..4]),
+                TcpOptionNumbers::TIMESTAMPS => {
+                    pkt.tcp_has_ts = true;
+                    pkt.tcp_timestamp[0..4].copy_from_slice(&option.payload()[0..4]);
+                },
                 TcpOptionNumbers::MSS => {
                     let payload = option.payload();
                     pkt.tcp_mss = (payload[0] as u16) << 8 | payload[1] as u16;
@@ -380,7 +394,7 @@ pub fn handle_arp(source_mac: MacAddr, source_ip: Ipv4Addr, dest_ip: Ipv4Addr, b
 #[inline(never)]
 pub fn handle_reply(pkt: &IngressPacket, source_mac: MacAddr, tx_slice: &mut [u8]) -> Option<usize> {
     let len = tx_slice.len();
-    if len >= MIN_REPLY_BUF_LEN {
+    if len >= MIN_REPLY_BUF_LEN_TS {
         build_reply_with_template(pkt, source_mac, tx_slice)
     } else {
         None
@@ -388,8 +402,9 @@ pub fn handle_reply(pkt: &IngressPacket, source_mac: MacAddr, tx_slice: &mut [u8
 }
 
 fn build_reply_with_template(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> Option<usize> {
-    reply[12..MIN_REPLY_BUF_LEN].copy_from_slice(&REPLY_TEMPLATE[12..MIN_REPLY_BUF_LEN]);
-    build_reply_fast(pkt, source_mac, reply)
+    reply[12..MIN_REPLY_BUF_LEN_TS].copy_from_slice(&REPLY_TEMPLATE[12..MIN_REPLY_BUF_LEN_TS]);
+    let len = if pkt.tcp_has_ts { MIN_REPLY_BUF_LEN_TS } else { MIN_REPLY_BUF_LEN };
+    build_reply_fast(pkt, source_mac, &mut reply[0..len])
 }
 
 macro_rules! try_opt {
@@ -402,6 +417,7 @@ macro_rules! try_opt {
 fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> Option<usize> {
     /* build ethernet packet */
     let mut ether = try_opt!(MutableEthernetPacket::new(reply));
+    const ETHERLEN: usize = 14;
 
     ether.set_source(source_mac);
     ether.set_destination(pkt.ether_source);
@@ -428,12 +444,16 @@ fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) 
             pkt.ipv4_source, pkt.ipv4_destination,
             pkt.tcp_source, pkt.tcp_destination, pkt.tcp_sequence,
             pkt.tcp_mss, cookie_time, &secret);
-        let mut tcp = try_opt!(MutableTcpPacket::new(&mut ip.payload_mut()[0..20 + 20]));
+        let mut tcp = try_opt!(MutableTcpPacket::new(&mut ip.payload_mut()[0..]));
         tcp.set_source(pkt.tcp_destination);
         tcp.set_destination(pkt.tcp_source);
         tcp.set_sequence(seq_num);
         tcp.set_acknowledgement(pkt.tcp_sequence + 1);
         tcp.set_checksum(0);
+
+        if !pkt.tcp_has_ts {
+            tcp.set_data_offset(6);
+        }
 
         {
             let options = tcp.get_options_raw_mut();
@@ -443,12 +463,9 @@ fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) 
                 mss_payload[0] = (mss_val >> 8) as u8;
                 mss_payload[1] = (mss_val & 0xff) as u8;
             }
-            { /* Timestamp */
+            if pkt.tcp_has_ts { /* Timestamp */
                 let mut ts = try_opt!(MutableTcpOptionPacket::new(&mut options[6..16]));
-                //ts.set_number(TcpOptionNumbers::TIMESTAMPS);
-                //ts.get_length_raw_mut()[0] = 10;
                 let mut stamps = ts.payload_mut();
-                /* TODO: replace hard coded values */
                 stamps[0..4].copy_from_slice(&u32_to_oct(cookie::synproxy_init_timestamp_cookie(pkt.tcp_wscale, pkt.tcp_sack, pkt.tcp_ecn, my_tcp_time))[0..4]);
                 stamps[4..8].copy_from_slice(&pkt.tcp_timestamp[0..4]);
             }
@@ -460,15 +477,16 @@ fn build_reply_fast(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) 
         tcp.set_checksum(cksum);
     }
 
+    let len = if pkt.tcp_has_ts { MIN_REPLY_BUF_LEN_TS } else { MIN_REPLY_BUF_LEN };
+
+    ip.set_total_length((len - ETHERLEN) as u16);
     let ip_cksum = {
         let ip = ip.to_immutable();
         csum::ip_checksum(&ip).to_be()
     };
     ip.set_checksum(ip_cksum);
 
-    //println!("REPLY: {:?}", &ip);
-    //len
-    Some(MIN_REPLY_BUF_LEN) // ip.get_total_length()
+    Some(len)
 }
 
 fn build_reply(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> usize {
@@ -592,9 +610,10 @@ fn u32_to_oct(bits: u32) -> [u8; 4] {
     [(bits >> 24) as u8, (bits >> 16) as u8, (bits >> 8) as u8, bits as u8]
 }
 
+/*
 #[bench]
 fn build_reply_bench(b: &mut test::Bencher) {
-    let mut data = [0;MIN_REPLY_BUF_LEN];
+    let mut data = [0;MIN_REPLY_BUF_LEN_TS];
     /* prepare data common to all packets beforehand */
     b.iter(|| {
         let pkt = IngressPacket {
@@ -613,7 +632,7 @@ fn build_reply_bench(b: &mut test::Bencher) {
 
 #[bench]
 fn build_reply_template_bench(b: &mut test::Bencher) {
-    let mut data = [0;MIN_REPLY_BUF_LEN];
+    let mut data = [0;MIN_REPLY_BUF_LEN_TS];
     /* prepare data common to all packets beforehand */
     b.iter(|| {
         let pkt = IngressPacket {
@@ -629,8 +648,6 @@ fn build_reply_template_bench(b: &mut test::Bencher) {
         build_reply_with_template(&pkt, MacAddr::new(0, 0, 0, 0, 0, 0), &mut data);
     })
 }
-
-/*
 fn build_reply_with_template_2(pkt: &IngressPacket, source_mac: MacAddr, reply: &mut [u8]) -> Option<usize> {
     reply[8..24].copy_from_slice(&REPLY_TEMPLATE[8..24]);
     reply[14 + 20 + 12..14 + 20 + 12 + 4].copy_from_slice(&REPLY_TEMPLATE[14 + 20 + 12..14 + 20 + 12 + 4]);
@@ -639,7 +656,7 @@ fn build_reply_with_template_2(pkt: &IngressPacket, source_mac: MacAddr, reply: 
 
 #[bench]
 fn build_reply_template_bench_2(b: &mut test::Bencher) {
-    let mut data = [0;MIN_REPLY_BUF_LEN];
+    let mut data = [0;MIN_REPLY_BUF_LEN_TS];
     /* prepare data common to all packets beforehand */
     b.iter(|| {
         let pkt = IngressPacket {
