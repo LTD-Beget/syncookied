@@ -227,7 +227,7 @@ impl Server<TcpListener> {
                         let mut buf = [0; 64];
                         if let Ok(len) = sock.read(&mut buf) {
                             if len < 2 {
-                                continue;
+                                break 'conn;
                             }
                         } else {
                             break 'conn;
