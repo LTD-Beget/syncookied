@@ -99,7 +99,7 @@ impl fmt::Debug for StateTable {
     }
 }
 
-#[derive(Debug,Eq,PartialEq)]
+#[derive(Debug,Eq,PartialEq,Copy,Clone)]
 enum ConnState {
     Established, // first ACK received and valid
     Closing, // FIN received
