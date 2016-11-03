@@ -128,17 +128,18 @@ pub fn handle_input(packet_data: &[u8], mac: MacAddr) -> Action {
 #[inline]
 fn handle_ether_packet(ethernet: &EthernetPacket, pkt: &mut IngressPacket, mac: MacAddr) -> Action {
     let bytes = ethernet.packet();
-    let mac_dest = &bytes[0..6];
+    let mut mac_dest : MacAddr = unsafe { ::std::mem::uninitialized() };// = MacAddr::new(0, 0, 0, 0, 0, 0);
+    mac_dest.0.copy_from_slice(&bytes[0..6]);
 
-    if mac_dest != mac.0 {
-        return Action::Drop(Reason::MacNotFound);
+    if mac_dest == mac {
+        if let EtherTypes::Ipv4 = ethernet.get_ethertype() {
+            pkt.ether_source.0.copy_from_slice(&bytes[6..12]);
+            return handle_ipv4_packet(ethernet, pkt)
+        } else {
+            return Action::Drop(Reason::InvalidEthernet)
+        }
     }
-    if let EtherTypes::Ipv4 = ethernet.get_ethertype() {
-        pkt.ether_source.0.copy_from_slice(&bytes[6..12]);
-        handle_ipv4_packet(ethernet, pkt)
-    } else {
-        Action::Drop(Reason::InvalidEthernet)
-    }
+    Action::Drop(Reason::MacNotFound)
 }
 
 #[inline]
