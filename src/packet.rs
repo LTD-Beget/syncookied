@@ -113,6 +113,7 @@ pub fn dump_input(packet_data: &[u8]) {
 }
 
 // main input handler
+#[inline]
 pub fn handle_input(packet_data: &[u8], mac: MacAddr) -> Action {
     let mut pkt: IngressPacket = Default::default();
     if let Some(eth) = EthernetPacket::new(packet_data) {
@@ -240,14 +241,15 @@ fn handle_tcp_ack(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
     let ip_daddr = pkt.ipv4_destination;
     let seq = tcp.get_sequence();
     let mut action = Action::Drop(Reason::IpNotFound);
+    let mut new_state = None;
 
-    ::RoutingTable::with_host_config_mut(ip_daddr, |hc| {
+    ::RoutingTable::with_host_config(ip_daddr, |hc| {
         match hc.state_table.get_state(ip_saddr, tcp_saddr, tcp_daddr) {
         Some((ts, ConnState::Established)) => {
             debug!("Found established state for {}:{} -> {}:{}, passing", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
             if ts < hc.tcp_timestamp - 30 * hc.hz {
                 /* update connection timestamp */
-                hc.state_table.set_state(ip_saddr, tcp_saddr, tcp_daddr, hc.tcp_timestamp, ConnState::Established);
+                new_state = Some(ConnState::Established);
             }
             action = Action::Forward(*fwd_mac);
         },
@@ -259,16 +261,14 @@ fn handle_tcp_ack(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
         None => {
             debug!("State for {}:{} -> {}:{} not found", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
             debug!("Check cookie for {}:{} -> {}:{}", ip_saddr, tcp_saddr, ip_daddr, tcp_daddr);
-            let mut secret: [[u32;17];2] = unsafe { mem::uninitialized() };
             let cookie_time = hc.tcp_cookie_time;
-            secret[0].copy_from_slice(&hc.syncookie_secret[0][0..17]);
-            secret[1].copy_from_slice(&hc.syncookie_secret[1][0..17]);
 
             let res = cookie::cookie_check(ip_saddr, ip_daddr, tcp_saddr, tcp_daddr,
-                                           seq, cookie, &secret, cookie_time);
+                                           seq, cookie, &hc.syncookie_secret, cookie_time);
             //println!("check result is {:?}", res);
             if res.is_some() {
-                hc.state_table.set_state(ip_saddr, tcp_saddr, tcp_daddr, hc.tcp_timestamp, ConnState::Established);
+                new_state = Some(ConnState::Established);
+                //hc.state_table.set_state(ip_saddr, tcp_saddr, tcp_daddr, hc.tcp_timestamp, ConnState::Established);
                 action = Action::Forward(*fwd_mac);
             } else {
                 debug!("Bad cookie, drop");
@@ -276,6 +276,12 @@ fn handle_tcp_ack(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
             }
         },
     }});
+
+    if let Some(state) = new_state {
+        ::RoutingTable::with_host_config_mut(ip_daddr, |hc| {
+                hc.state_table.set_state(ip_saddr, tcp_saddr, tcp_daddr, hc.tcp_timestamp, state);
+        });
+    }
     action
 }
 
@@ -392,7 +398,7 @@ pub fn handle_arp(source_mac: MacAddr, source_ip: Ipv4Addr, dest_ip: Ipv4Addr, b
 
 // main reply handler
 // returns packet size
-#[inline(never)]
+#[inline]
 pub fn handle_reply(pkt: &IngressPacket, source_mac: MacAddr, tx_slice: &mut [u8]) -> Option<usize> {
     let len = tx_slice.len();
     if len >= MIN_REPLY_BUF_LEN_TS {
