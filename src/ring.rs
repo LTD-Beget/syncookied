@@ -115,6 +115,7 @@ impl<'a> Worker<'a> {
     }
 
     // main RX loop
+    #[inline(never)]
     pub fn run(mut self) {
         let metrics_client = self.metrics_addr.map(metrics::Client::new);
         let hostname = util::get_host_name().unwrap();
@@ -194,11 +195,14 @@ impl<'a> Worker<'a> {
     fn process_rings(&self, rx_ring: &mut RxRing, tx_ring: &mut TxRing, stats: &mut RingStats) {
         use std::cmp::min;
 
-        let mut limit = 128;
+        let mut limit = 1024;
         limit = min(limit, rx_ring.len());
         limit = min(limit, tx_ring.len());
 
+        let mut i = 0;
+
         for ((rx_slot, rx_buf), (tx_slot, tx_buf)) in rx_ring.iter().zip(tx_ring.iter()).take(limit as usize) {
+            i += 1;
             stats.received += 1;
             match packet::handle_input(rx_buf, self.mac) {
                 Action::Drop(reason) => {
