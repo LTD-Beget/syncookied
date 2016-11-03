@@ -115,6 +115,7 @@ impl<'a> Worker<'a> {
     }
 
     // main RX loop
+    #[inline(never)]
     pub fn run(mut self) {
         let metrics_client = self.metrics_addr.map(metrics::Client::new);
         let hostname = util::get_host_name().unwrap();
@@ -145,33 +146,44 @@ impl<'a> Worker<'a> {
         let mut flags = netmap::Direction::InputOutput;
         loop {
             if let Some(_) = self.netmap.poll(flags) {
-                let mut rx_ring = {
-                    let mut rx_iter = self.netmap.rx_iter();
-                    rx_iter.next().unwrap()
-                };
-                let mut tx_ring = {
-                    let mut tx_iter = self.netmap.tx_iter();
-                    tx_iter.next().unwrap()
-                };
-                let rx_empty = rx_ring.is_empty();
-                let tx_empty = tx_ring.is_empty();
+                    let mut rx_ring = {
+                        let mut rx_iter = self.netmap.rx_iter();
+                        rx_iter.next().unwrap()
+                    };
+                    let mut tx_ring = {
+                        let mut tx_iter = self.netmap.tx_iter();
+                        tx_iter.next().unwrap()
+                    };
+/*
+                    if self.ring_num == 0 {
+                        println!("RX RING#0: head: {} cur: {} tail: {}", rx_ring.0.head, rx_ring.0.cur, rx_ring.0.tail);
+                        //println!("TX RING#0: head: {} cur: {} tail: {}", tx_ring.0.head, tx_ring.0.cur, tx_ring.0.tail);
+                    }
+*/
+                    let rx_empty = rx_ring.is_empty();
+                    let tx_empty = tx_ring.is_empty();
 
-                if rx_empty && tx_empty {
-                    flags = netmap::Direction::InputOutput;
-                    continue;
-                }
-                if rx_empty {
-                    flags = netmap::Direction::Input;
-                    continue;
-                }
-                if tx_empty {
-                    flags = netmap::Direction::Output;
-                    continue;
-                }
-                if rate < 100 {
-                    self.update_routing_cache();
-                }
-                self.process_rings(&mut rx_ring, &mut tx_ring, &mut stats);
+                    /*
+                    if rx_empty && tx_empty {
+                        flags = netmap::Direction::InputOutput;
+                        continue;
+                    }
+                    */
+                    if rx_empty {
+                        flags = netmap::Direction::Input;
+                        //println!("RX #{} empty", self.ring_num);
+                        continue;
+                    }
+                    if tx_empty {
+                        flags = netmap::Direction::Output;
+                        //println!("TX #{} empty", self.ring_num);
+                        continue;
+                    }
+                    if rate < 100 {
+                        self.update_routing_cache();
+                    }
+                    let p = self.process_rings(&mut rx_ring, &mut tx_ring, &mut stats);
+                    debug!("RX#{} processed {}", self.ring_num, p);
             }
             if before.elapsed() >= ival {
                 if let Some(ref metrics_client) = metrics_client {
@@ -191,14 +203,17 @@ impl<'a> Worker<'a> {
         }
     }
 
-    fn process_rings(&self, rx_ring: &mut RxRing, tx_ring: &mut TxRing, stats: &mut RingStats) {
+    fn process_rings(&self, rx_ring: &mut RxRing, tx_ring: &mut TxRing, stats: &mut RingStats) -> u32 {
         use std::cmp::min;
 
-        let mut limit = 128;
+        let mut limit = 1024;
+        let mut processed = 0;
+        
         limit = min(limit, rx_ring.len());
         limit = min(limit, tx_ring.len());
 
-        for ((rx_slot, rx_buf), (tx_slot, tx_buf)) in rx_ring.iter().zip(tx_ring.iter()).take(limit as usize) {
+        for (rx_slot, rx_buf) in rx_ring.iter().take(limit as usize) {
+            processed += 1;
             stats.received += 1;
             match packet::handle_input(rx_buf, self.mac) {
                 Action::Drop(reason) => {
@@ -215,6 +230,8 @@ impl<'a> Worker<'a> {
                      }
                 },
                 Action::Forward(fwd_mac) => {
+                    let (tx_slot, _) = tx_ring.iter().next().unwrap();
+
                     let tx_idx = tx_slot.get_buf_idx();
                     let tx_len = tx_slot.get_len();
 
@@ -235,6 +252,8 @@ impl<'a> Worker<'a> {
                     stats.sent += 1;
                 },
                 Action::Reply(ref packet) => {
+                    let (tx_slot, tx_buf) = tx_ring.iter().next().unwrap();
+
                     stats.syn_received += 1;
                     if let Some(len) = packet::handle_reply(packet, self.mac, tx_buf) {
                         tx_slot.set_flags(0);
@@ -246,5 +265,6 @@ impl<'a> Worker<'a> {
                 },
             }
         }
+        processed
     }
 }

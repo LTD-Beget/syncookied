@@ -1,6 +1,6 @@
 [package]
 name = "syncookied"
-version = "0.3.0"
+version = "0.3.1"
 description = "syn flood protection system"
 authors = ["Alexander Polyakov <apolyakov@beget.ru>"]
 build = "build.rs"
@@ -18,7 +18,7 @@ crossbeam = "0.2.5"
 clap = "2.4.0"
 lazy_static = "0.2.1"
 yaml-rust = "0.3.2"
-parking_lot = "0.2.6"
+parking_lot = "0.3.6"
 fnv = "1.0.2"
 chan-signal = "0.1.6"
 log = "0.3.6"
@@ -51,7 +51,7 @@ features = [ "netmap_with_libs" ]
 [dependencies.pnet]
 git = "https://github.com/polachok/libpnet"
 #branch = "syncookied"
-rev = "dc7c12303952fd4761caec8f6a94af0f5c259ff1"
+rev = "fc0d97b0d9f9ba84217a5d7ff19a295d96f4e289"
 #rev = "8eeb66788"
 
 [build-dependencies]
