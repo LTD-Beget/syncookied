@@ -158,7 +158,6 @@ impl RxRing {
 
     #[inline]
     pub fn iter(&mut self) -> RxSlotIter {
-        let cur = self.0.cur;
         RxSlotIter {
             ring: self,
         }
@@ -259,7 +258,6 @@ impl TxRing {
 
     #[inline]
     pub fn iter(&mut self) -> TxSlotIter {
-        let cur = self.0.cur;
         TxSlotIter {
             ring: self,
         }

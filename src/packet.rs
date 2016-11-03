@@ -233,7 +233,6 @@ fn handle_tcp_syn(tcp: TcpPacket, pkt: &mut IngressPacket) -> Action {
 
 #[inline]
 fn handle_tcp_ack(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) -> Action {
-    use std::mem;
     let cookie = tcp.get_acknowledgement() - 1;
     let tcp_saddr = tcp.get_source();
     let tcp_daddr = tcp.get_destination();

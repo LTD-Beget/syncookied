@@ -145,7 +145,7 @@ impl<'a> Worker<'a> {
 
         let mut flags = netmap::Direction::InputOutput;
         loop {
-            if let Some(found) = self.netmap.poll(flags) {
+            if let Some(_) = self.netmap.poll(flags) {
                     let mut rx_ring = {
                         let mut rx_iter = self.netmap.rx_iter();
                         rx_iter.next().unwrap()
@@ -183,10 +183,7 @@ impl<'a> Worker<'a> {
                         self.update_routing_cache();
                     }
                     let p = self.process_rings(&mut rx_ring, &mut tx_ring, &mut stats);
-                    /*if self.ring_num == 0 {
-                        println!("RX#0 processed {}", p);
-                    }
-                    */
+                    debug!("RX#{} processed {}", self.ring_num, p);
             }
             if before.elapsed() >= ival {
                 if let Some(ref metrics_client) = metrics_client {
@@ -212,16 +209,10 @@ impl<'a> Worker<'a> {
         let mut limit = 1024;
         let mut processed = 0;
         
-        //if self.ring_num == 0 {
-         //   println!("RX#0 limit: {}, rx len: {} tx len: {}", limit, rx_ring.len(), tx_ring.len());
-        //}
         limit = min(limit, rx_ring.len());
         limit = min(limit, tx_ring.len());
 
-        let mut i = 0;
-
         for (rx_slot, rx_buf) in rx_ring.iter().take(limit as usize) {
-            i += 1;
             processed += 1;
             stats.received += 1;
             match packet::handle_input(rx_buf, self.mac) {
@@ -239,7 +230,7 @@ impl<'a> Worker<'a> {
                      }
                 },
                 Action::Forward(fwd_mac) => {
-                    let (tx_slot, tx_buf) = tx_ring.iter().next().unwrap();
+                    let (tx_slot, _) = tx_ring.iter().next().unwrap();
 
                     let tx_idx = tx_slot.get_buf_idx();
                     let tx_len = tx_slot.get_len();
