@@ -550,21 +550,21 @@ impl NetmapDescriptor {
         };
 
         let rv = unsafe { libc::poll(&mut pollfd, 1, 1000) };
-        if rv <= 0 {
-            return None;
-        }
-        if pollfd.revents & libc::POLLERR == libc::POLLERR {
-            error!("POLLERR!");
-            return None;
-        }
-        if pollfd.revents & (libc::POLLIN | libc::POLLOUT) != 0 {
-            return Some(Direction::InputOutput);
-        }
-        if pollfd.revents & libc::POLLIN != 0 {
-            return Some(Direction::Input);
-        }
-        if pollfd.revents & libc::POLLOUT != 0 {
-            return Some(Direction::Output);
+        if rv > 0 {
+            if pollfd.revents & (libc::POLLIN | libc::POLLOUT) != 0 {
+                return Some(Direction::InputOutput);
+            }
+            if pollfd.revents & libc::POLLIN != 0 {
+                return Some(Direction::Input);
+            }
+            if pollfd.revents & libc::POLLOUT != 0 {
+                return Some(Direction::Output);
+            }
+        } else if rv < 0 {
+            if pollfd.revents & libc::POLLERR == libc::POLLERR {
+                error!("POLLERR!");
+                return None;
+            }
         }
         None
     }
