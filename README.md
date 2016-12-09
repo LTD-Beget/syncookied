@@ -109,6 +109,10 @@ Troubleshooting
 ---------------
 Please check the [FAQ](https://github.com/LTD-Beget/syncookied/wiki) before filing an issue.
 
+Need help?
+----------
+Join us on Telegram: https://telegram.me/syncookied
+
 Performance
 ===========
 syncookied under 12.65 Mpps syn flood attack utilizing 12 cores of Xeon E5-2680v3:
