@@ -26,7 +26,8 @@ echo "=> Installing headers locally"
 (cd kernel-headers && make ARCH=`arch` prefix=/ DESTDIR=`pwd`/kernel-headers install > /dev/null)
 
 echo "=> Building static libpcap"
-cd libpcap && CC=musl-gcc CFLAGS='-fPIC -I../kernel-headers/kernel-headers/include' ./configure
+# PATH_MAX is not defined (?)
+cd libpcap && CC=musl-gcc CFLAGS='-fPIC -I../kernel-headers/kernel-headers/include -DPATH_MAX=4096' ./configure
 make
 
 STATIC_LIBPCAP_PATH=$(pwd) CFLAGS=-I${BUILD_DIR}/netmap/sys cargo build --verbose --target=$TARGET --release
