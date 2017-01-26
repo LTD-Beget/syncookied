@@ -9,7 +9,6 @@ use pnet::packet::ip::{IpNextHeaderProtocol};
 use pnet::packet::ipv4::Ipv4Packet;
 use pnet::packet::tcp::TcpPacket;
 
-#[link(name = "asm")]
 extern "C" {
     // note: returns Big Endian
     fn csum_partial_folded(buff: *const u8, len: u32, wsum: u32) -> u16;
