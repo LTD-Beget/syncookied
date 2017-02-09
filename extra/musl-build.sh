@@ -6,7 +6,7 @@ BUILD_DIR=$(pwd)
 export PATH=$PATH:$HOME/.cargo/bin/
 
 echo "=> Installing rust"
-curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain=nightly
+curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain=stable
 
 rustc -V
 cargo -V
