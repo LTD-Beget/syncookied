@@ -1,5 +1,4 @@
 /// Packet processing logic
-extern crate test;
 
 use std::net::Ipv4Addr;
 
