@@ -309,7 +309,7 @@ fn handle_tcp_fin(tcp: TcpPacket, fwd_mac: &MacAddr, pkt: &mut IngressPacket) ->
     let tcp_daddr = tcp.get_destination();
     let ip_saddr = pkt.ipv4_source;
     let ip_daddr = pkt.ipv4_destination;
-    let mut action = Action::Forward(*fwd_mac); // Action::Drop(Reason::StateNotFound);
+    let mut action = Action::Drop(Reason::StateNotFound);
 
     ::RoutingTable::with_host_config_mut(ip_daddr, |hc| {
         if hc.state_table.get_state(ip_saddr, tcp_saddr, tcp_daddr).is_some() {
