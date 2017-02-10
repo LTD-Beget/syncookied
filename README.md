@@ -12,7 +12,7 @@ better performance under SYN flood attacks thanks to kernel bypass (netmap).
 Installation
 ============
 
-1. Install **nightly** rust (instructions here: https://www.rust-lang.org/en-US/downloads.html)
+1. Install rust (instructions here: https://www.rust-lang.org/en-US/downloads.html)
 2. Install `build-essential` and `libpcap-dev` or equivalent package for your distribution
 3. Install [netmap](https://github.com/luigirizzo/netmap). Make sure netmap.h / netmap_user.h can be found in /usr/include. Alternative you can point CFLAGS variable to their location: [example](https://github.com/LTD-Beget/syncookied/blob/master/.travis.yml).
 4. run `cargo build --release`, resulting binary will be found in target/release/syncookied. 
