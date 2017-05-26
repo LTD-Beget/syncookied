@@ -12,8 +12,6 @@ addons:
         - musl
 script:
   - |
-      # uninstall the rust toolchain installed by travis, we are going to use rustup
-      sh ~/rust/lib/rustlib/uninstall.sh &&
       export PATH=$PATH:$HOME/.cargo/bin/ &&
       echo "Building static binary" &&
       sh extra/musl-build.sh &&
