@@ -210,15 +210,23 @@ fn handle_tcp_syn(tcp: TcpPacket, pkt: &mut IngressPacket) -> Action {
         for option in options {
             match option.get_number() {
                 TcpOptionNumbers::TIMESTAMPS => {
-                    pkt.tcp_has_ts = true;
-                    pkt.tcp_timestamp[0..4].copy_from_slice(&option.payload()[0..4]);
+                    let payload = option.payload();
+                    if payload.len() == 4 {
+                        pkt.tcp_has_ts = true;
+                        pkt.tcp_timestamp[0..4].copy_from_slice(&payload[0..4]);
+                    }
                 },
                 TcpOptionNumbers::MSS => {
                     let payload = option.payload();
-                    pkt.tcp_mss = (payload[0] as u16) << 8 | payload[1] as u16;
+                    if payload.len() == 2 {
+                        pkt.tcp_mss = (payload[0] as u16) << 8 | payload[1] as u16;
+                    }
                 },
                 TcpOptionNumbers::WSCALE => {
-                    pkt.tcp_wscale = option.payload()[0];
+                    let payload = option.payload();
+                    if payload.len() == 1 {
+                        pkt.tcp_wscale = payload[0];
+                    }
                 },
                 TcpOptionNumbers::SACK_PERMITTED => {
                     pkt.tcp_sack = true;
