@@ -211,27 +211,38 @@ fn handle_tcp_syn(tcp: TcpPacket, pkt: &mut IngressPacket) -> Action {
             match option.get_number() {
                 TcpOptionNumbers::TIMESTAMPS => {
                     let payload = option.payload();
-                    if payload.len() == 4 {
+                    if payload.len() == 8 {
                         pkt.tcp_has_ts = true;
                         pkt.tcp_timestamp[0..4].copy_from_slice(&payload[0..4]);
+                    } else {
+                        return Action::Drop(Reason::InvalidTcp);
                     }
                 },
                 TcpOptionNumbers::MSS => {
                     let payload = option.payload();
                     if payload.len() == 2 {
                         pkt.tcp_mss = (payload[0] as u16) << 8 | payload[1] as u16;
+                    } else {
+                        return Action::Drop(Reason::InvalidTcp);
                     }
                 },
                 TcpOptionNumbers::WSCALE => {
                     let payload = option.payload();
                     if payload.len() == 1 {
                         pkt.tcp_wscale = payload[0];
+                    } else {
+                        return Action::Drop(Reason::InvalidTcp);
                     }
                 },
                 TcpOptionNumbers::SACK_PERMITTED => {
                     pkt.tcp_sack = true;
                 },
-                _ => {},
+                TcpOptionNumbers::EOL | TcpOptionNumbers::NOP | TcpOptionNumbers::SACK => {
+                    /* do nothing */
+                },
+                _ => {
+                    return Action::Drop(Reason::InvalidTcp);
+                },
             }
         }
     }
